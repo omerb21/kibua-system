@@ -1,7 +1,8 @@
 from datetime import date
 import requests
-from app.models import Grant
-from app.exemption_caps import get_exemption_cap_by_year, calculate_exempt_capital
+from sqlalchemy import func
+from app.models import Grant, Client, Pension, Commutation
+from app.exemption_caps import calc_exempt_capital, get_monthly_cap, PERCENT_EXEMPT
 
 def calculate_eligibility_age(birth_date: date, gender: str, pension_start: date) -> date:
     """
@@ -156,3 +157,106 @@ def calculate_final_exempt_amount(exemption_cap_remaining: float, commutation_im
         סכום הפטור הסופי לקצבה
     """
     return round(max(exemption_cap_remaining - commutation_impact, 0), 2)
+
+
+def calculate_summary(client_id: int) -> dict:
+    """
+    מחשב את סיכום הפטור המלא ללקוח לפי המבנה החדש
+    
+    Args:
+        client_id: מזהה הלקוח
+        
+    Returns:
+        מילון עם כל פרטי הסיכום
+    """
+    # שלב 1: קבלת נתוני הלקוח
+    client = Client.query.get_or_404(client_id)
+    
+    # קבלת קצבה ראשונה (אם קיימת)
+    first_pension = Pension.query.filter_by(client_id=client_id).order_by(Pension.start_date).first()
+    if not first_pension:
+        raise ValueError("לא נמצאה קצבה ללקוח")
+    
+    # שלב 1: קביעת שנת הזכאות
+    eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, first_pension.start_date)
+    elig_year = eligibility_date.year
+    
+    # שלב 2: חישוב תקרת ההון הפטורה
+    exempt_cap = calc_exempt_capital(elig_year)
+    
+    # שלב 3: חישוב סך המענקים
+    grants = Grant.query.filter_by(client_id=client_id).all()
+    
+    # חישוב סכומים נומינליים ומוצמדים
+    nominal_total = 0
+    indexed_total = 0
+    
+    for grant in grants:
+        # חישוב סכום מוצמד
+        if not grant.grant_amount:
+            continue
+            
+        nominal_total += grant.grant_amount
+        
+        # חישוב סכום מוצמד
+        indexed_amount = fetch_indexation_factor(grant.grant_date, eligibility_date, grant.grant_amount)
+        
+        # חישוב חלק יחסי
+        ratio = calculate_grant_ratio(grant.work_start_date, grant.work_end_date, eligibility_date)
+        
+        # הוספה לסך המוצמד היחסי
+        indexed_total += indexed_amount * ratio
+        
+        # עדכון הנתונים בדטאבייס (לצורך הצגה בנספח)
+        grant.grant_indexed_amount = indexed_amount
+        grant.grant_ratio = ratio
+        grant.impact_on_exemption = indexed_amount * ratio * 1.35  # עדכון למקדם 1.35
+    
+    # שלב 4: חישוב סך ההיוונים
+    # שליפת היוונים מכל הקצבאות
+    comm_total = 0
+    commutations = []
+    
+    for pension in Pension.query.filter_by(client_id=client_id).all():
+        pension_comms = Commutation.query.filter_by(pension_id=pension.id, include_calc=True).all()
+        commutations.extend(pension_comms)
+        for comm in pension_comms:
+            if comm.amount:
+                comm_total += comm.amount
+    
+    # שלב 5: חישוב יתרת תקרה
+    grants_impact = indexed_total * 1.35
+    remaining_cap = exempt_cap - grants_impact - comm_total
+    
+    # שלב 6-8: חישוב קצבה פטורה ואחוז
+    monthly_cap = get_monthly_cap(elig_year)
+    pension_exempt = monthly_cap * PERCENT_EXEMPT
+    pension_rate = round(PERCENT_EXEMPT * 100, 2)
+    
+    # הכנת התשובה במבנה החדש
+    summary = {
+        # נתוני לקוח
+        "client_info": {
+            "id": client.id,
+            "name": f"{client.first_name} {client.last_name}",
+            "eligibility_date": eligibility_date.isoformat(),
+            "elig_year": elig_year
+        },
+        # סיכום חישובים לפי הסדר החדש
+        "exempt_cap": round(exempt_cap, 2),                  # 1. תקרת ההון הפטורה
+        "grants_nominal": round(nominal_total, 2),           # 2. סך מענקים פטורים נומינליים
+        "grants_indexed": round(indexed_total, 2),           # 3. סך מענקים פטורים מוצמדים
+        "grants_impact": round(grants_impact, 2),            # 4. סך פגיעה בפטור = (3) × 1.35
+        "commutations_total": round(comm_total, 2),           # 5. סך היוונים
+        "remaining_cap": round(remaining_cap, 2),            # 6. הפרש תקרת הון פטורה מול סך מענקים והיוונים
+        "monthly_cap": round(monthly_cap, 2),               # 7. תקרת קצבה מזכה
+        "pension_exempt": round(pension_exempt, 2),          # 8. קצבה פטורה מחושבת
+        "pension_rate": pension_rate,                        # 9. אחוז הקצבה הפטורה
+        # נתונים נוספים לנספחים
+        "details": {
+            "grants_count": len(grants),
+            "commutations_count": len(commutations)
+        }
+    }
+    
+    return summary

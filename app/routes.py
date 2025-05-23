@@ -167,88 +167,27 @@ def api_calculate_grant_impact():
 @main_bp.route('/api/calculate-exemption-summary', methods=['POST'])
 def api_calculate_exemption_summary():
     """
-    חישוב סיכום פטור כולל לקצבה ללקוח:
-    1. איסוף כל המענקים הפטורים וההיוונים
-    2. חישוב סך הפגיעות בתקרת ההון
-    3. חישוב יתרת תקרה וסכום פטור סופי
+    חישוב סיכום פטור כולל לקצבה ללקוח לפי המבנה החדש
     """
     data = request.get_json()
     client_id = data.get('client_id')
     
-    # בדיקה שהלקוח קיים
-    client = Client.query.get_or_404(client_id)
-    
-    # קבלת קצבה ראשונה (אם קיימת)
-    first_pension = Pension.query.filter_by(client_id=client_id).order_by(Pension.start_date).first()
-    if not first_pension:
-        return jsonify({"error": "לא נמצאה קצבה ללקוח"}), 404
-    
-    # שליפת כל המענקים של הלקוח
-    grants = Grant.query.filter_by(client_id=client_id).all()
-    
-    # שליפת היוונים מכל הקצבאות
-    all_commutations = []
-    pensions = Pension.query.filter_by(client_id=client_id).all()
-    for pension in pensions:
-        commutations = Commutation.query.filter_by(pension_id=pension.id).all()
-        all_commutations.extend(commutations)
-    
-    # קביעת תאריך הזכאות
-    eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, first_pension.start_date)
-    eligibility_year = eligibility_date.year
-    
-    # עדכון וחישוב השפעת המענקים
-    for grant in grants:
-        # חישוב סכום מוצמד
-        indexed_amount = fetch_indexation_factor(grant.grant_date, eligibility_date, grant.grant_amount)
-        grant.grant_indexed_amount = indexed_amount
+    try:
+        # שימוש בפונקציה החדשה לחישוב הסיכום
+        summary = calculate_summary(client_id)
         
-        # חישוב חלק יחסי
-        ratio = calculate_grant_ratio(grant.work_start_date, grant.work_end_date, eligibility_date)
-        grant.grant_ratio = ratio
+        # עדכון בדטאבייס
+        db.session.commit()
         
-        # חישוב פגיעה בתקרה
-        impact = calculate_grant_impact(grant.grant_amount, indexed_amount/grant.grant_amount, ratio)
-        grant.impact_on_exemption = impact
-    
-    # סיכום כל הפגיעות
-    total_grant_impact = calculate_total_grant_impact(grants)
-    total_commutation_impact = calculate_total_commutation_impact(all_commutations)
-    
-    # חישוב יתרת תקרה זמינה
-    exemption_cap = get_exemption_cap_by_year(eligibility_year)
-    available_cap = calculate_available_exemption_cap(eligibility_year, total_grant_impact)
-    
-    # חישוב סכום פטור סופי
-    final_exempt = calculate_final_exempt_amount(available_cap, total_commutation_impact)
-    
-    # עדכון בדטאבייס
-    db.session.commit()
-    
-    # הכנת תשובה
-    result = {
-        "client_info": {
-            "id": client.id,
-            "name": f"{client.first_name} {client.last_name}",
-            "eligibility_date": eligibility_date.isoformat()
-        },
-        "exemption_summary": {
-            "total_grant_impact": total_grant_impact,
-            "total_commutation_impact": total_commutation_impact,
-            "exemption_cap_for_year": exemption_cap,
-            "available_exemption_cap": available_cap,
-            "final_exempt_amount": final_exempt
-        },
-        "details": {
-            "grants_count": len(grants),
-            "commutations_count": len(all_commutations)
-        }
-    }
-    
-    return jsonify(result)
+        return jsonify(summary)
+        
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": f"שגיאה בחישוב הסיכום: {str(e)}"}), 500
 
-
-from app.pdf_filler import fill_pdf_form
+from app.pdf_filler import fill_pdf_form, generate_grants_appendix, generate_commutations_appendix
+from app.utils import calculate_summary
 
 # קבלת רשימת מענקים ללקוח
 @main_bp.route("/api/clients/<int:client_id>/grants", methods=["GET"])
@@ -316,83 +255,122 @@ def api_fill_161d_pdf():
     """
     מקבל מזהה לקוח, מחשב את סיכום הפטור לקצבה, וממלא טופס 161ד
     """
-    data = request.get_json()
-    client_id = data["client_id"]
+    try:
+        data = request.get_json()
+        client_id = data["client_id"]
+    
+        # שליפת נתוני הלקוח
+        client = Client.query.get_or_404(client_id)
+        
+        # חישוב הסיכום עם הפונקציה החדשה
+        summary = calculate_summary(client_id)
+        
+        # קבלת תאריכים נדרשים
+        elig_date = datetime.fromisoformat(summary["client_info"]["eligibility_date"])
+    
+        # הכנת נתונים למילוי הטופס לפי המבנה החדש
+        form_data = {
+            # פרטי לקוח
+            "full_name": f"{client.first_name} {client.last_name}",
+            "tz": client.tz,
+            "birth_date": client.birth_date.strftime("%d/%m/%Y"),
+            "eligibility_date": elig_date.strftime("%d/%m/%Y"),
+            
+            # סיכום חישובים לפי הסדר החדש
+            "cap_exempt": str(summary["exempt_cap"]),                 # 1. תקרת ההון הפטורה
+            "grants_nominal": str(summary["grants_nominal"]),         # 2. סך מענקים פטורים נומינליים
+            "grants_indexed": str(summary["grants_indexed"]),         # 3. סך מענקים פטורים מוצמדים
+            "grants_impact": str(summary["grants_impact"]),           # 4. סך פגיעה בפטור
+            "comm_total": str(summary["commutations_total"]),         # 5. סך היוונים
+            "remaining_cap": str(summary["remaining_cap"]),           # 6. הפרש תקרת הון פטורה
+            "monthly_cap": str(summary["monthly_cap"]),               # 7. תקרת קצבה מזכה
+            "pension_exempt": str(summary["pension_exempt"]),         # 8. קצבה פטורה מחושבת
+            "pension_rate": f'{summary["pension_rate"]}%',            # 9. אחוז הקצבה הפטורה
+        }
+    
+        # נתיבים לקבצי PDF
+        base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+        input_pdf = os.path.join(base_dir, "static", "templates", "161ד.pdf")
+        output_dir = os.path.join(base_dir, "static", "generated")
+        
+        # וידוא שהתיקייה קיימת
+        os.makedirs(output_dir, exist_ok=True)
+        
+        output_pdf = os.path.join(output_dir, f"161ד_מלא_{client_id}.pdf")
+    
+        # מילוי הטופס
+        fill_pdf_form(input_pdf, output_pdf, form_data)
+        
+        # יצירת נספחים
+        grants_appendix_path = generate_grants_appendix(client_id)
+        commutations_appendix_path = generate_commutations_appendix(client_id)
+        
+        # הכנת נתיבים יחסיים
+        response = {
+            "message": "PDF נוצר בהצלחה", 
+            "main_pdf": {
+                "path": f"static/generated/161ד_מלא_{client_id}.pdf",
+                "download_url": f"/download-pdf/161d/{client_id}"
+            }
+        }
+        
+        # הוספת נתיבי הנספחים אם נוצרו
+        if grants_appendix_path:
+            response["grants_appendix"] = {
+                "path": f"static/generated/נספח_מענקים_{client_id}.pdf",
+                "download_url": f"/download-pdf/grants/{client_id}"
+            }
+            
+        if commutations_appendix_path:
+            response["commutations_appendix"] = {
+                "path": f"static/generated/נספח_היוונים_{client_id}.pdf",
+                "download_url": f"/download-pdf/commutations/{client_id}"
+            }
+        
+        return jsonify(response)
+        
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": f"שגיאה ביצירת ה-PDF: {str(e)}"}), 500
 
-    # שליפת נתוני הלקוח
+
+@main_bp.route("/download-pdf/<string:doc_type>/<int:client_id>", methods=["GET"])
+def download_pdf(doc_type, client_id):
+    """
+    מאפשר הורדת קבצי PDF שונים ללקוח (טופס ראשי, נספח מענקים, נספח היוונים)
+    """
     client = Client.query.get_or_404(client_id)
-    
-    # בדיקה שיש לפחות קצבה אחת
-    if not client.pensions:
-        return jsonify({"error": "ללקוח אין קצבאות"}), 404
-    
-    pension = client.pensions[0]
-    eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, pension.start_date)
-
-    # שליפת מענקים והיוונים
-    grants = client.grants
-    commutations = [c for p in client.pensions for c in p.commutations]
-
-    # חישוב סיכום הפטור
-    summary = {
-        "grant_total": calculate_total_grant_impact(grants),
-        "commutation_total": calculate_total_commutation_impact(commutations),
-        "exemption_cap": get_exemption_cap_by_year(eligibility_date.year),
-    }
-    summary["final_exemption"] = calculate_final_exempt_amount(
-        summary["exemption_cap"] - summary["grant_total"],
-        summary["commutation_total"]
-    )
-
-    # הכנת נתונים למילוי הטופס
-    form_data = {
-        "full_name": f"{client.first_name} {client.last_name}",
-        "tz": client.tz,
-        "birth_date": client.birth_date.strftime("%d/%m/%Y"),
-        "eligibility_date": eligibility_date.strftime("%d/%m/%Y"),
-        "grant_total": str(summary["grant_total"]),
-        "commutation_total": str(summary["commutation_total"]),
-        "exemption_cap": str(summary["exemption_cap"]),
-        "final_exemption": str(summary["final_exemption"]),
-    }
-
-    # נתיבים לקבצי PDF
     base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-    input_pdf = os.path.join(base_dir, "static", "templates", "161ד.pdf")
-    output_dir = os.path.join(base_dir, "static", "generated")
     
-    # וידוא שהתיקייה קיימת
-    os.makedirs(output_dir, exist_ok=True)
-    
-    output_pdf = os.path.join(output_dir, f"161ד_מלא_{client_id}.pdf")
-
-    # מילוי הטופס
-    fill_pdf_form(input_pdf, output_pdf, form_data)
-
-    # חזרת נתיב יחסי למערכת
-    relative_path = f"static/generated/161ד_מלא_{client_id}.pdf"
-    download_url = f"/download-pdf/{client_id}"
-    
-    return jsonify({"message": "PDF נוצר בהצלחה", "path": relative_path, "download_url": download_url})
-
-
-@main_bp.route("/download-pdf/<int:client_id>", methods=["GET"])
-def download_pdf(client_id):
-    """
-    הורדת טופס 161ד מלא עבור לקוח מסויים
-    """
-    base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-    pdf_path = os.path.join(base_dir, "static", "generated", f"161ד_מלא_{client_id}.pdf")
+    # הגדרת הנתיבים ושמות הקבצים לפי סוג המסמך
+    if doc_type == "161d":
+        pdf_path = os.path.join(base_dir, "static", "generated", f"161ד_מלא_{client_id}.pdf")
+        download_name = f"161ד_{client.first_name}_{client.last_name}_{client.tz}.pdf"
+    elif doc_type == "grants":
+        pdf_path = os.path.join(base_dir, "static", "generated", f"נספח_מענקים_{client_id}.pdf")
+        download_name = f"נספח_מענקים_{client.first_name}_{client.last_name}.pdf"
+    elif doc_type == "commutations":
+        pdf_path = os.path.join(base_dir, "static", "generated", f"נספח_היוונים_{client_id}.pdf")
+        download_name = f"נספח_היוונים_{client.first_name}_{client.last_name}.pdf"
+    else:
+        return jsonify({"error": "סוג מסמך לא תקין"}), 400
     
     if not os.path.exists(pdf_path):
-        return jsonify({"error": "הקובץ לא נמצא"}), 404
-        
+        return jsonify({"error": "קובץ PDF לא נמצא"}), 404
+    
     return send_file(
         pdf_path,
+        mimetype="application/pdf",
         as_attachment=True,
-        download_name=f"161ד_מלא_{client_id}.pdf",
-        mimetype="application/pdf"
+        download_name=download_name
     )
+    
+# שמירת נתיב ישן לתאימות לאחור
+@main_bp.route("/download-pdf/<int:client_id>", methods=["GET"])
+def legacy_download_pdf(client_id):
+    """נתיב קודם להורדת קובץ (לתאימות אחורה)"""
+    return download_pdf("161d", client_id)
 
 
 @main_bp.route("/api/calculate-exemption-summary", methods=["POST"])

@@ -4,7 +4,7 @@
 """
 
 # מיפוי שנה → תקרה חודשית
-exemption_caps = {
+ANNUAL_CAPS = {  # תקרה חודשית (₪) לפי שנת זכאות
     2025: 9430,
     2024: 9430,
     2023: 9120,
@@ -21,17 +21,27 @@ exemption_caps = {
     2012: 8190
 }
 
+# קבועים לחישוב תקרת ההון הפטורה
+PERCENT_EXEMPT = 0.57  # 57%
+MULTIPLIER = 180
+
+def get_monthly_cap(year: int) -> float:
+    """החזר תקרה חודשית; ברירת-מחדל: 2025."""
+    return ANNUAL_CAPS.get(year, ANNUAL_CAPS[2025])  # ברירת מחדל 2025
+
+def calc_exempt_capital(year: int) -> float:
+    """החזר תקרת-הון פטורה: cap × 180 × 57 %."""
+    return get_monthly_cap(year) * MULTIPLIER * PERCENT_EXEMPT
+    
+# שמירת הפונקציות הישנות לאחוריות
 def get_exemption_cap_by_year(year: int) -> float:
     """
-    מחזיר את התקרה החודשית לפי שנת הזכאות
-    אם השנה לא קיימת בטבלה, מחזיר את התקרה של 2025
+    מחזיר את התקרה החודשית לפי שנת הזכאות (פונקציה ישנה, השתמש ב-get_monthly_cap)
     """
-    return exemption_caps.get(year, exemption_caps[2025])  # ברירת מחדל 2025
+    return get_monthly_cap(year)
 
 def calculate_exempt_capital(year: int) -> float:
     """
-    מחשב את תקרת ההון הפטור לפי השנה
-    התקרה השנתית = תקרה חודשית * 180 * 0.49
+    מחשב את תקרת ההון הפטור לפי השנה (פונקציה ישנה, השתמש ב-calc_exempt_capital)
     """
-    monthly_cap = get_exemption_cap_by_year(year)
-    return monthly_cap * 180 * 0.49
+    return calc_exempt_capital(year)

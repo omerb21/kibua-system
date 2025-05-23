@@ -1,6 +1,6 @@
 from datetime import date
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 
 db = SQLAlchemy()
@@ -83,9 +83,11 @@ class Commutation(db.Model):
 
     id = Column(Integer, primary_key=True)
     pension_id = Column(Integer, ForeignKey("pension.id"))
+    payer_name = Column(String(120))  # משלם
     amount = Column(Float)
-    date = Column(Date)
+    date = Column(Date, name="comm_date")  # שינוי שם העמודה ל-comm_date
     full_or_partial = Column(String(10))  # "full" / "partial"
+    include_calc = Column(Boolean, default=True)  # האם נלקח בחישוב
 
     pension = relationship("Pension", backref="commutations")
     
