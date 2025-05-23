@@ -16,6 +16,18 @@ class Client(db.Model):
     phone = Column(String(20))
     address = Column(String(200))
     gender = Column(String(10))  # Added gender field for eligibility age calculation
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "first_name": self.first_name,
+            "last_name": self.last_name,
+            "tz": self.tz,
+            "birth_date": self.birth_date.isoformat() if self.birth_date else None,
+            "phone": self.phone,
+            "address": self.address,
+            "gender": self.gender
+        }
 
 class Grant(db.Model):
     __tablename__ = "grant"
@@ -32,6 +44,20 @@ class Grant(db.Model):
     impact_on_exemption = Column(Float)  # פגיעה בתקרה
 
     client = relationship("Client", backref="grants")
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "employer_name": self.employer_name,
+            "work_start_date": self.work_start_date.isoformat() if self.work_start_date else None,
+            "work_end_date": self.work_end_date.isoformat() if self.work_end_date else None,
+            "grant_amount": self.grant_amount,
+            "grant_date": self.grant_date.isoformat() if self.grant_date else None,
+            "grant_indexed_amount": self.grant_indexed_amount,
+            "grant_ratio": self.grant_ratio,
+            "impact_on_exemption": self.impact_on_exemption
+        }
 
 class Pension(db.Model):
     __tablename__ = "pension"
@@ -42,6 +68,15 @@ class Pension(db.Model):
     start_date = Column(Date)  # תחילת קצבה
 
     client = relationship("Client", backref="pensions")
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "payer_name": self.payer_name,
+            "start_date": self.start_date.isoformat() if self.start_date else None,
+            "commutations": [c.to_dict() for c in self.commutations] if hasattr(self, 'commutations') else []
+        }
 
 class Commutation(db.Model):
     __tablename__ = "commutation"
@@ -53,3 +88,12 @@ class Commutation(db.Model):
     full_or_partial = Column(String(10))  # "full" / "partial"
 
     pension = relationship("Pension", backref="commutations")
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "pension_id": self.pension_id,
+            "amount": self.amount,
+            "date": self.date.isoformat() if self.date else None,
+            "full_or_partial": self.full_or_partial
+        }

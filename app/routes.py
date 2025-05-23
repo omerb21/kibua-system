@@ -1,4 +1,5 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
+import os
 from app.models import db, Client, Grant, Pension, Commutation
 from app.utils import (
     calculate_eligibility_age, 
@@ -193,7 +194,7 @@ def api_calculate_exemption_summary():
         all_commutations.extend(commutations)
     
     # קביעת תאריך הזכאות
-    eligibility_date = first_pension.start_date
+    eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, first_pension.start_date)
     eligibility_year = eligibility_date.year
     
     # עדכון וחישוב השפעת המענקים
@@ -245,3 +246,212 @@ def api_calculate_exemption_summary():
     }
     
     return jsonify(result)
+
+
+from app.pdf_filler import fill_pdf_form
+
+# קבלת רשימת מענקים ללקוח
+@main_bp.route("/api/clients/<int:client_id>/grants", methods=["GET"])
+def get_client_grants(client_id):
+    client = Client.query.get_or_404(client_id)
+    return jsonify([g.to_dict() for g in client.grants])
+
+# הוספת מענק ללקוח
+@main_bp.route("/api/clients/<int:client_id>/grants", methods=["POST"])
+def add_grant_to_client(client_id):
+    data = request.get_json()
+    grant = Grant(
+        client_id=client_id,
+        employer_name=data.get('employer_name'),
+        work_start_date=date.fromisoformat(data.get('work_start_date')) if data.get('work_start_date') else None,
+        work_end_date=date.fromisoformat(data.get('work_end_date')) if data.get('work_end_date') else None,
+        grant_amount=data.get('grant_amount'),
+        grant_date=date.fromisoformat(data.get('grant_date')) if data.get('grant_date') else None
+    )
+    db.session.add(grant)
+    db.session.commit()
+    return jsonify(grant.to_dict()), 201
+    
+# קבלת רשימת קצבאות ללקוח
+@main_bp.route("/api/clients/<int:client_id>/pensions", methods=["GET"])
+def get_client_pensions(client_id):
+    client = Client.query.get_or_404(client_id)
+    return jsonify([p.to_dict() for p in client.pensions])
+
+# הוספת קצבה ללקוח
+@main_bp.route("/api/clients/<int:client_id>/pensions", methods=["POST"])
+def add_pension_to_client(client_id):
+    data = request.get_json()
+    pension = Pension(
+        client_id=client_id,
+        payer_name=data.get('payer_name'),
+        start_date=date.fromisoformat(data.get('start_date')) if data.get('start_date') else None
+    )
+    db.session.add(pension)
+    db.session.commit()
+    return jsonify(pension.to_dict()), 201
+
+# קבלת רשימת היוונים לקצבה
+@main_bp.route("/api/pensions/<int:pension_id>/commutations", methods=["GET"])
+def get_pension_commutations(pension_id):
+    pension = Pension.query.get_or_404(pension_id)
+    return jsonify([c.to_dict() for c in pension.commutations])
+
+# הוספת היוון לקצבה
+@main_bp.route("/api/pensions/<int:pension_id>/commutations", methods=["POST"])
+def add_commutation_to_pension(pension_id):
+    data = request.get_json()
+    commutation = Commutation(
+        pension_id=pension_id,
+        amount=data.get('amount'),
+        date=date.fromisoformat(data.get('date')) if data.get('date') else None,
+        full_or_partial=data.get('full_or_partial', 'partial')
+    )
+    db.session.add(commutation)
+    db.session.commit()
+    return jsonify(commutation.to_dict()), 201
+
+@main_bp.route("/api/fill-161d-pdf", methods=["POST"])
+def api_fill_161d_pdf():
+    """
+    מקבל מזהה לקוח, מחשב את סיכום הפטור לקצבה, וממלא טופס 161ד
+    """
+    data = request.get_json()
+    client_id = data["client_id"]
+
+    # שליפת נתוני הלקוח
+    client = Client.query.get_or_404(client_id)
+    
+    # בדיקה שיש לפחות קצבה אחת
+    if not client.pensions:
+        return jsonify({"error": "ללקוח אין קצבאות"}), 404
+    
+    pension = client.pensions[0]
+    eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, pension.start_date)
+
+    # שליפת מענקים והיוונים
+    grants = client.grants
+    commutations = [c for p in client.pensions for c in p.commutations]
+
+    # חישוב סיכום הפטור
+    summary = {
+        "grant_total": calculate_total_grant_impact(grants),
+        "commutation_total": calculate_total_commutation_impact(commutations),
+        "exemption_cap": get_exemption_cap_by_year(eligibility_date.year),
+    }
+    summary["final_exemption"] = calculate_final_exempt_amount(
+        summary["exemption_cap"] - summary["grant_total"],
+        summary["commutation_total"]
+    )
+
+    # הכנת נתונים למילוי הטופס
+    form_data = {
+        "full_name": f"{client.first_name} {client.last_name}",
+        "tz": client.tz,
+        "birth_date": client.birth_date.strftime("%d/%m/%Y"),
+        "eligibility_date": eligibility_date.strftime("%d/%m/%Y"),
+        "grant_total": str(summary["grant_total"]),
+        "commutation_total": str(summary["commutation_total"]),
+        "exemption_cap": str(summary["exemption_cap"]),
+        "final_exemption": str(summary["final_exemption"]),
+    }
+
+    # נתיבים לקבצי PDF
+    base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+    input_pdf = os.path.join(base_dir, "static", "templates", "161ד.pdf")
+    output_dir = os.path.join(base_dir, "static", "generated")
+    
+    # וידוא שהתיקייה קיימת
+    os.makedirs(output_dir, exist_ok=True)
+    
+    output_pdf = os.path.join(output_dir, f"161ד_מלא_{client_id}.pdf")
+
+    # מילוי הטופס
+    fill_pdf_form(input_pdf, output_pdf, form_data)
+
+    # חזרת נתיב יחסי למערכת
+    relative_path = f"static/generated/161ד_מלא_{client_id}.pdf"
+    download_url = f"/download-pdf/{client_id}"
+    
+    return jsonify({"message": "PDF נוצר בהצלחה", "path": relative_path, "download_url": download_url})
+
+
+@main_bp.route("/download-pdf/<int:client_id>", methods=["GET"])
+def download_pdf(client_id):
+    """
+    הורדת טופס 161ד מלא עבור לקוח מסויים
+    """
+    base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+    pdf_path = os.path.join(base_dir, "static", "generated", f"161ד_מלא_{client_id}.pdf")
+    
+    if not os.path.exists(pdf_path):
+        return jsonify({"error": "הקובץ לא נמצא"}), 404
+        
+    return send_file(
+        pdf_path,
+        as_attachment=True,
+        download_name=f"161ד_מלא_{client_id}.pdf",
+        mimetype="application/pdf"
+    )
+
+
+@main_bp.route("/api/calculate-exemption-summary", methods=["POST"])
+def calculate_exemption_summary():
+    data = request.get_json()
+    client_id = data["client_id"]
+    client = Client.query.get_or_404(client_id)
+    pension = client.pensions[0]
+    eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, pension.start_date)
+    grants = client.grants
+    commutations = [c for p in client.pensions for c in p.commutations]
+
+    summary = {
+        "grant_total": calculate_total_grant_impact(grants),
+        "commutation_total": calculate_total_commutation_impact(commutations),
+        "exemption_cap": get_exemption_cap_by_year(eligibility_date.year),
+    }
+    summary["final_exemption"] = calculate_final_exempt_amount(
+        summary["exemption_cap"] - summary["grant_total"],
+        summary["commutation_total"]
+    )
+
+    return jsonify(summary)
+
+
+@main_bp.route("/api/fill-161d-pdf", methods=["POST"])
+def fill_161d_pdf():
+    data = request.get_json()
+    client_id = data["client_id"]
+    client = Client.query.get_or_404(client_id)
+    pension = client.pensions[0]
+    eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, pension.start_date)
+    grants = client.grants
+    commutations = [c for p in client.pensions for c in p.commutations]
+
+    summary = {
+        "grant_total": calculate_total_grant_impact(grants),
+        "commutation_total": calculate_total_commutation_impact(commutations),
+        "exemption_cap": get_exemption_cap_by_year(eligibility_date.year),
+    }
+    summary["final_exemption"] = calculate_final_exempt_amount(
+        summary["exemption_cap"] - summary["grant_total"],
+        summary["commutation_total"]
+    )
+
+    form_data = {
+        "full_name": f"{client.first_name} {client.last_name}",
+        "tz": client.tz,
+        "birth_date": client.birth_date.strftime("%d/%m/%Y"),
+        "eligibility_date": eligibility_date.strftime("%d/%m/%Y"),
+        "grant_total": summary["grant_total"],
+        "commutation_total": summary["commutation_total"],
+        "exemption_cap": summary["exemption_cap"],
+        "final_exemption": summary["final_exemption"],
+    }
+
+    input_pdf = "static/templates/161ד.pdf"
+    output_pdf = f"static/generated/161ד_מלא_{client_id}.pdf"
+
+    fill_pdf_form(input_pdf, output_pdf, form_data)
+
+    return jsonify({"path": output_pdf})

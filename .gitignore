@@ -48,3 +48,21 @@ instance/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Node.js / React
+node_modules/
+client-ui/node_modules/
+client-ui/dist/
+client-ui/build/
+client-ui/.cache/
+client-ui/coverage/
+client-ui/.env.local
+client-ui/.env.development.local
+client-ui/.env.test.local
+client-ui/.env.production.local
+client-ui/npm-debug.log*
+client-ui/yarn-debug.log*
+client-ui/yarn-error.log*
+
+# Generated PDF files
+static/generated/

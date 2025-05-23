@@ -1,6 +1,7 @@
 from datetime import date
 import requests
 from app.models import Grant
+from app.exemption_caps import get_exemption_cap_by_year, calculate_exempt_capital
 
 def calculate_eligibility_age(birth_date: date, gender: str, pension_start: date) -> date:
     """
@@ -103,33 +104,7 @@ def calculate_grant_impact(grant_amount: float, indexation_factor: float, ratio:
     """
     return round(grant_amount * indexation_factor * ratio, 2)
 
-def get_exemption_cap_by_year(year: int) -> float:
-    """
-    מחזיר את תקרת הפטור לפי שנה
-    
-    Args:
-        year: השנה הרלוונטית
-        
-    Returns:
-        תקרת הפטור בש"ח
-    """
-    exemption_cap_by_year = {
-        2012: 4350000,
-        2013: 4390000,
-        2014: 4450000,
-        2015: 4500000,
-        2016: 4560000,
-        2017: 4610000,
-        2018: 4670000,
-        2019: 4720000,
-        2020: 4780000,
-        2021: 4820000,
-        2022: 4860000,
-        2023: 4880000,
-        2024: 4890000,
-        2025: 4890000,
-    }
-    return exemption_cap_by_year.get(year, 4890000)  # ברירת מחדל
+# get_exemption_cap_by_year מיובא כעת מ־exemption_caps.py
 
 def calculate_total_grant_impact(grants: list) -> float:
     """
@@ -166,7 +141,7 @@ def calculate_available_exemption_cap(eligibility_year: int, grant_impact: float
     Returns:
         יתרת תקרת הון זמינה
     """
-    cap = get_exemption_cap_by_year(eligibility_year)
+    cap = calculate_exempt_capital(eligibility_year)  # שימוש בפונקציה החדשה עם חישוב מלא
     return round(cap - grant_impact, 2)
 
 def calculate_final_exempt_amount(exemption_cap_remaining: float, commutation_impact: float) -> float:
