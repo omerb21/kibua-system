@@ -2,7 +2,7 @@ from datetime import date
 import requests
 from sqlalchemy import func
 from app.models import Grant, Client, Pension, Commutation
-from app.exemption_caps import calc_exempt_capital, get_monthly_cap, PERCENT_EXEMPT
+from app.exemption_caps import calc_exempt_capital, get_monthly_cap, get_exemption_percentage
 
 def calculate_eligibility_age(birth_date: date, gender: str, pension_start: date) -> date:
     """
