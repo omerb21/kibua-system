@@ -1,0 +1,85 @@
+{
+  "client_id": 1,
+  "client_name": "עומר בן צבי",
+  "eligibility_date": "2025-02-11",
+  "totals": {
+    "nominal": 270000.0,
+    "indexed_old": 260576.194958,
+    "indexed_new": 260576.2569581888,
+    "indexed_diff": 0.06200018880190328,
+    "impact_old": 351777.8631933,
+    "impact_new": 351777.9468935549,
+    "impact_diff": 0.08370025485055521
+  },
+  "grants": [
+    {
+      "id": 7,
+      "employer": "מעסיק ראשון",
+      "amount": 100000.0,
+      "work_start": "1985-01-01",
+      "work_end": "1999-12-31",
+      "grant_date": "1999-12-31",
+      "old": {
+        "indexed": 69896.11495799999,
+        "ratio": 0.45901,
+        "impact": 94359.75519329999
+      },
+      "new": {
+        "indexed_full": 152275.8,
+        "ratio": 0.45901040715720287,
+        "indexed": 69896.1769581888,
+        "impact": 94359.83889355487
+      },
+      "diff": {
+        "indexed": 0.06200018880190328,
+        "impact": 0.08370025487965904
+      }
+    },
+    {
+      "id": 8,
+      "employer": "מעסיק שני",
+      "amount": 80000.0,
+      "work_start": "2000-01-01",
+      "work_end": "2011-10-01",
+      "grant_date": "2011-10-01",
+      "old": {
+        "indexed": 94750.61,
+        "ratio": 1.0,
+        "impact": 127913.32350000001
+      },
+      "new": {
+        "indexed_full": 94750.61,
+        "ratio": 1.0,
+        "indexed": 94750.61,
+        "impact": 127913.32350000001
+      },
+      "diff": {
+        "indexed": 0.0,
+        "impact": 0.0
+      }
+    },
+    {
+      "id": 9,
+      "employer": "מעסיק שלישי",
+      "amount": 90000.0,
+      "work_start": "2012-01-01",
+      "work_end": "2022-12-31",
+      "grant_date": "2022-12-31",
+      "old": {
+        "indexed": 95929.47,
+        "ratio": 1.0,
+        "impact": 129504.78450000001
+      },
+      "new": {
+        "indexed_full": 95929.47,
+        "ratio": 1.0,
+        "indexed": 95929.47,
+        "impact": 129504.78450000001
+      },
+      "diff": {
+        "indexed": 0.0,
+        "impact": 0.0
+      }
+    }
+  ]
+}

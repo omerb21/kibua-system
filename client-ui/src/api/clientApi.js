@@ -15,3 +15,11 @@ export function createClient(data) {
 export function updateClient(id, data) {
   return axios.put(`/api/clients/${id}`, data);
 }
+
+export function deleteGrant(grantId) {
+  return axios.delete(`/api/grants/${grantId}`);
+}
+
+export function deleteClient(clientId) {
+  return axios.delete(`/api/clients/${clientId}`);
+}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getClient, createClient } from '../api/clientApi';
+import { getClient, createClient, updateClient } from '../api/clientApi';
 
 function ClientForm() {
   const navigate = useNavigate();
@@ -19,6 +19,7 @@ function ClientForm() {
   
   const [loading, setLoading] = useState(!isNewClient);
   const [error, setError] = useState(null);
+  const [message, setMessage] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -62,9 +63,12 @@ function ClientForm() {
         // Navigate to the new client's page
         navigate(`/client/${response.data.id}`);
       } else {
-        // TODO: Implement update client functionality in the backend
-        // await updateClient(id, formData);
-        alert('עדכון לקוח קיים אינו נתמך עדיין');
+        // Update existing client
+        await updateClient(id, formData);
+        setMessage('פרטי הלקוח עודכנו בהצלחה');
+        // Refresh client data
+        const response = await getClient(id);
+        setFormData(response.data);
       }
     } catch (err) {
       setError('שגיאה בשמירת הנתונים');
@@ -85,6 +89,12 @@ function ClientForm() {
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
+        </div>
+      )}
+      
+      {message && (
+        <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
+          {message}
         </div>
       )}
       

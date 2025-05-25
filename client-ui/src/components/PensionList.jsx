@@ -20,7 +20,9 @@ function PensionList() {
   const [commutationForm, setCommutationForm] = useState({
     amount: '',
     date: '',
-    full_or_partial: 'partial'
+    withholding_file: '',
+    full_or_partial: 'partial',
+    include_calc: true
   });
 
   useEffect(() => {
@@ -105,10 +107,11 @@ function PensionList() {
       setSubmitting(true);
       setError(null);
       
-      // Convert amount to number
+      // Convert amount to number and set payer_name from the pension
       const data = {
         ...commutationForm,
-        amount: parseFloat(commutationForm.amount)
+        amount: parseFloat(commutationForm.amount),
+        payer_name: selectedPension.payer_name // Set payer_name from the selected pension
       };
       
       // Note: In a real app, this endpoint would need to be implemented in the backend
@@ -130,7 +133,9 @@ function PensionList() {
       setCommutationForm({
         amount: '',
         date: '',
-        full_or_partial: 'partial'
+        payer_name: '',
+        full_or_partial: 'partial',
+        include_calc: true
       });
       setShowCommutationForm(false);
       setSelectedPension(null);
@@ -265,30 +270,34 @@ function PensionList() {
           <h4 className="font-bold mb-4">הוסף היוון לקצבה: {selectedPension.payer_name}</h4>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <div>
-              <label className="block text-gray-700 mb-2" htmlFor="amount">
-                סכום היוון
-              </label>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">תיק ניכויים</label>
+              <input
+                type="text"
+                name="withholding_file"
+                value={commutationForm.withholding_file}
+                onChange={handleCommutationChange}
+                className="form-input"
+                required
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">סכום</label>
               <input
                 type="number"
-                id="amount"
                 name="amount"
                 value={commutationForm.amount}
                 onChange={handleCommutationChange}
                 className="form-input"
                 required
-                min="0"
-                step="0.01"
               />
             </div>
-            
-            <div>
-              <label className="block text-gray-700 mb-2" htmlFor="date">
-                תאריך היוון
-              </label>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">תאריך היוון</label>
               <input
                 type="date"
-                id="date"
                 name="date"
                 value={commutationForm.date}
                 onChange={handleCommutationChange}
@@ -296,13 +305,10 @@ function PensionList() {
                 required
               />
             </div>
-            
-            <div>
-              <label className="block text-gray-700 mb-2" htmlFor="full_or_partial">
-                סוג היוון
-              </label>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">סוג היוון</label>
               <select
-                id="full_or_partial"
                 name="full_or_partial"
                 value={commutationForm.full_or_partial}
                 onChange={handleCommutationChange}
@@ -312,6 +318,19 @@ function PensionList() {
                 <option value="partial">חלקי</option>
                 <option value="full">מלא</option>
               </select>
+            </div>
+
+            <div className="mb-4">
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  name="include_calc"
+                  checked={commutationForm.include_calc}
+                  onChange={(e) => setCommutationForm(prev => ({ ...prev, include_calc: e.target.checked }))}
+                  className="form-checkbox h-4 w-4 text-blue-600 ml-2"
+                />
+                <span className="text-sm font-medium text-gray-700">לכלול בחישוב הפטור</span>
+              </label>
             </div>
           </div>
           
@@ -371,21 +390,27 @@ function PensionList() {
                 <table className="min-w-full bg-white">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="py-2 px-4 text-right">משלם ההיוון</th>
                       <th className="py-2 px-4 text-right">סכום</th>
                       <th className="py-2 px-4 text-right">תאריך</th>
                       <th className="py-2 px-4 text-right">סוג</th>
+                      <th className="py-2 px-4 text-right">נכלל בחישוב</th>
                       <th className="py-2 px-4 text-right">פעולות</th>
                     </tr>
                   </thead>
                   <tbody>
                     {pension.commutations.map((commutation) => (
                       <tr key={commutation.id} className="border-b hover:bg-gray-50">
-                        <td className="py-2 px-4">{commutation.amount.toLocaleString()} ₪</td>
+                        <td className="py-2 px-4">{pension.payer_name || 'לא צוין'}</td>
+                        <td className="py-2 px-4">{commutation.amount?.toLocaleString() || '0'} ₪</td>
                         <td className="py-2 px-4">
                           {new Date(commutation.date).toLocaleDateString('he-IL')}
                         </td>
                         <td className="py-2 px-4">
                           {commutation.full_or_partial === 'full' ? 'מלא' : 'חלקי'}
+                        </td>
+                        <td className="py-2 px-4">
+                          {commutation.include_calc !== false ? 'כן' : 'לא'}
                         </td>
                         <td className="py-2 px-4">
                           <button

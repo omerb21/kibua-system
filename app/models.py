@@ -39,7 +39,8 @@ class Grant(db.Model):
     work_end_date = Column(Date)
     grant_amount = Column(Float)  # נומינלי
     grant_date = Column(Date)
-    grant_indexed_amount = Column(Float)  # סכום מוצמד
+    grant_indexed_amount = Column(Float)  # סכום מוצמד ("מענק פטור צמוד")
+    limited_indexed_amount = Column(Float)  # סכום מוגבל ל-32 שנים ("מענק פטור צמוד (32 שנים)")
     grant_ratio = Column(Float)  # חלק יחסי
     impact_on_exemption = Column(Float)  # פגיעה בתקרה
 
@@ -83,9 +84,9 @@ class Commutation(db.Model):
 
     id = Column(Integer, primary_key=True)
     pension_id = Column(Integer, ForeignKey("pension.id"))
-    payer_name = Column(String(120))  # משלם
+    withholding_file = Column(String(120))  # תיק ניכויים
     amount = Column(Float)
-    date = Column(Date, name="comm_date")  # שינוי שם העמודה ל-comm_date
+    date = Column(Date, name="comm_date")  # תאריך היוון
     full_or_partial = Column(String(10))  # "full" / "partial"
     include_calc = Column(Boolean, default=True)  # האם נלקח בחישוב
 
@@ -95,7 +96,9 @@ class Commutation(db.Model):
         return {
             "id": self.id,
             "pension_id": self.pension_id,
+            "withholding_file": self.withholding_file,
             "amount": self.amount,
             "date": self.date.isoformat() if self.date else None,
-            "full_or_partial": self.full_or_partial
+            "full_or_partial": self.full_or_partial,
+            "include_calc": self.include_calc
         }

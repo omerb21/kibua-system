@@ -87,9 +87,12 @@ def calculate_grant_ratio(grant_start: date, grant_end: date, eligibility_date: 
         return 0.0
 
     overlap_days = (overlap_end - overlap_start).days
-    grant_days = (grant_end - grant_start).days
-
-    return round(overlap_days / grant_days, 4) if grant_days > 0 else 0.0
+    
+    # חישוב יחס מתוך 32 שנים לפי ההנחיות
+    # משתמשים ב-365.25 כדי לקחת בחשבון שנים מעוברות
+    max_days_32y = 32 * 365.25
+    
+    return round(overlap_days / max_days_32y, 4) if overlap_days > 0 else 0.0
 
 def calculate_grant_impact(grant_amount: float, indexation_factor: float, ratio: float) -> float:
     """
@@ -174,12 +177,16 @@ def calculate_summary(client_id: int) -> dict:
     
     # קבלת קצבה ראשונה (אם קיימת)
     first_pension = Pension.query.filter_by(client_id=client_id).order_by(Pension.start_date).first()
-    if not first_pension:
-        raise ValueError("לא נמצאה קצבה ללקוח")
     
     # שלב 1: קביעת שנת הזכאות
-    eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, first_pension.start_date)
-    elig_year = eligibility_date.year
+    # אם אין קצבה, נשתמש בתאריך ברירת מחדל - גיל הפרישה הרגיל לפי המגדר
+    if not first_pension:
+        current_date = datetime.now().date()
+        eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, current_date)
+        elig_year = eligibility_date.year
+    else:
+        eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, first_pension.start_date)
+        elig_year = eligibility_date.year
     
     # שלב 2: חישוב תקרת ההון הפטורה
     exempt_cap = calc_exempt_capital(elig_year)
@@ -191,6 +198,8 @@ def calculate_summary(client_id: int) -> dict:
     nominal_total = 0
     indexed_total = 0
     
+    from app.routes import process_grant  # Import here to avoid circular imports
+
     for grant in grants:
         # חישוב סכום מוצמד
         if not grant.grant_amount:
@@ -198,19 +207,12 @@ def calculate_summary(client_id: int) -> dict:
             
         nominal_total += grant.grant_amount
         
-        # חישוב סכום מוצמד
-        indexed_amount = fetch_indexation_factor(grant.grant_date, eligibility_date, grant.grant_amount)
+        # עיבוד המענק עם הפונקציה החדשה (הצמדה אמיתית לפי API)
+        process_grant(grant, eligibility_date)
         
-        # חישוב חלק יחסי
-        ratio = calculate_grant_ratio(grant.work_start_date, grant.work_end_date, eligibility_date)
-        
-        # הוספה לסך המוצמד היחסי
-        indexed_total += indexed_amount * ratio
-        
-        # עדכון הנתונים בדטאבייס (לצורך הצגה בנספח)
-        grant.grant_indexed_amount = indexed_amount
-        grant.grant_ratio = ratio
-        grant.impact_on_exemption = indexed_amount * ratio * 1.35  # עדכון למקדם 1.35
+        # חישוב הסכומים המוצמדים לפי תוצאות העיבוד
+        if grant.grant_indexed_amount and grant.grant_ratio:
+            indexed_total += grant.grant_indexed_amount
     
     # שלב 4: חישוב סך ההיוונים
     # שליפת היוונים מכל הקצבאות
@@ -230,8 +232,15 @@ def calculate_summary(client_id: int) -> dict:
     
     # שלב 6-8: חישוב קצבה פטורה ואחוז
     monthly_cap = get_monthly_cap(elig_year)
-    pension_exempt = monthly_cap * PERCENT_EXEMPT
-    pension_rate = round(PERCENT_EXEMPT * 100, 2)
+    
+    # חישוב קצבה פטורה לפי נוסחה מתוקנת - יתרת תקרה זמינה לחלק ל-180
+    if remaining_cap > 0:
+        pension_exempt = remaining_cap / 180
+    else:
+        pension_exempt = 0
+    
+    # חישוב אחוז הקצבה הפטורה
+    pension_rate = round((pension_exempt / monthly_cap) * 100, 2) if monthly_cap > 0 else 0
     
     # הכנת התשובה במבנה החדש
     summary = {
