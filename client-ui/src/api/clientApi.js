@@ -23,3 +23,7 @@ export function deleteGrant(grantId) {
 export function deleteClient(clientId) {
   return axios.delete(`/api/clients/${clientId}`);
 }
+
+export function reserveGrant(clientId, amount) {
+  return axios.post(`/api/clients/${clientId}/reserve-grant`, { reserved_grant_amount: amount });
+}

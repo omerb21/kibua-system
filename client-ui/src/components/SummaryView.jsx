@@ -142,6 +142,18 @@ function SummaryView() {
                 </td>
               </tr>
               <tr className="border-b">
+                <td className="py-3 px-4 bg-blue-50 font-medium">מענק עתידי משוריין (נומינלי)</td>
+                <td className="py-3 px-4 text-left">
+                  {summary.reserved_grant_nominal.toLocaleString()} ₪
+                </td>
+              </tr>
+              <tr className="border-b">
+                <td className="py-3 px-4 bg-blue-50 font-medium">השפעת מענק עתידי (×1.35)</td>
+                <td className="py-3 px-4 text-left">
+                  {summary.reserved_grant_impact.toLocaleString()} ₪
+                </td>
+              </tr>
+              <tr className="border-b">
                 <td className="py-3 px-4 bg-blue-50 font-medium">סך היוונים</td>
                 <td className="py-3 px-4 text-left">
                   {summary.commutations_total.toLocaleString()} ₪

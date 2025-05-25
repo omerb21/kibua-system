@@ -97,7 +97,8 @@ def get_client(client_id):
         "birth_date": client.birth_date.isoformat() if client.birth_date else None,
         "phone": client.phone,
         "address": client.address,
-        "gender": client.gender
+        "gender": client.gender,
+        "reserved_grant_amount": client.reserved_grant_amount
     })
 
 @main_bp.route('/api/clients/<int:client_id>', methods=['PUT'])
@@ -499,6 +500,8 @@ def api_fill_161d_pdf():
             "grants_nominal": str(summary["grants_nominal"]),         # 2. סך מענקים פטורים נומינליים
             "grants_indexed": str(summary["grants_indexed"]),         # 3. סך מענקים פטורים מוצמדים
             "grants_impact": str(summary["grants_impact"]),           # 4. סך פגיעה בפטור
+            "reserved_grant_nominal": str(summary["reserved_grant_nominal"]),  # 4.1 מענק עתידי משוריין (נומינלי)
+            "reserved_grant_impact": str(summary["reserved_grant_impact"]),    # 4.2 השפעת מענק עתידי (×1.35)
             "comm_total": str(summary["commutations_total"]),         # 5. סך היוונים
             "remaining_cap": str(summary["remaining_cap"]),           # 6. הפרש תקרת הון פטורה
             "monthly_cap": str(summary["monthly_cap"]),               # 7. תקרת קצבה מזכה
@@ -624,6 +627,16 @@ def legacy_download_pdf(client_id):
     """נתיב קודם להורדת קובץ (לתאימות אחורה)"""
     return download_pdf("161d", client_id)
 
+
+@main_bp.route('/api/clients/<int:client_id>/reserve-grant', methods=['POST'])
+def reserve_grant(client_id):
+    client = Client.query.get_or_404(client_id)
+    data = request.get_json()
+    reserved_amount = data.get('reserved_grant_amount')
+    if reserved_amount is not None:
+        client.reserved_grant_amount = reserved_amount
+        db.session.commit()
+    return jsonify({'message': 'Reserved grant updated successfully'})
 
 @main_bp.route('/api/calculate-exemption-summary', methods=['POST'])
 def calculate_exemption_summary():

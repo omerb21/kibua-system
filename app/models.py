@@ -16,6 +16,7 @@ class Client(db.Model):
     phone = Column(String(20))
     address = Column(String(200))
     gender = Column(String(10))  # Added gender field for eligibility age calculation
+    reserved_grant_amount = db.Column(db.Float, default=0.0)  # Amount of future grant to be reserved
     
     def to_dict(self):
         return {
@@ -26,7 +27,8 @@ class Client(db.Model):
             "birth_date": self.birth_date.isoformat() if self.birth_date else None,
             "phone": self.phone,
             "address": self.address,
-            "gender": self.gender
+            "gender": self.gender,
+            "reserved_grant_amount": self.reserved_grant_amount
         }
 
 class Grant(db.Model):

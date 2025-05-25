@@ -228,7 +228,14 @@ def calculate_summary(client_id: int) -> dict:
     
     # שלב 5: חישוב יתרת תקרה
     grants_impact = indexed_total * 1.35
-    remaining_cap = exempt_cap - grants_impact - comm_total
+    
+    # חישוב הפחתת מענק עתידי
+    reserved_impact = 0
+    if client.reserved_grant_amount:
+        reserved_impact = client.reserved_grant_amount * 1.35
+        
+    # הפחתת כל הפגיעות מתקרת ההון הפטורה
+    remaining_cap = exempt_cap - grants_impact - comm_total - reserved_impact
     
     # שלב 6-8: חישוב קצבה פטורה ואחוז
     monthly_cap = get_monthly_cap(elig_year)
@@ -256,6 +263,8 @@ def calculate_summary(client_id: int) -> dict:
         "grants_nominal": round(nominal_total, 2),           # 2. סך מענקים פטורים נומינליים
         "grants_indexed": round(indexed_total, 2),           # 3. סך מענקים פטורים מוצמדים
         "grants_impact": round(grants_impact, 2),            # 4. סך פגיעה בפטור = (3) × 1.35
+        "reserved_grant_nominal": round(client.reserved_grant_amount, 2) if client.reserved_grant_amount else 0,  # 4.1 מענק עתידי משוריין (נומינלי)
+        "reserved_grant_impact": round(reserved_impact, 2),   # 4.2 השפעת מענק עתידי (×1.35)
         "commutations_total": round(comm_total, 2),           # 5. סך היוונים
         "remaining_cap": round(remaining_cap, 2),            # 6. הפרש תקרת הון פטורה מול סך מענקים והיוונים
         "monthly_cap": round(monthly_cap, 2),               # 7. תקרת קצבה מזכה

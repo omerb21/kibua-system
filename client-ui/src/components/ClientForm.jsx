@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getClient, createClient, updateClient } from '../api/clientApi';
+import { getClient, createClient, updateClient, reserveGrant } from '../api/clientApi';
 
 function ClientForm() {
   const navigate = useNavigate();
@@ -14,7 +14,8 @@ function ClientForm() {
     birth_date: '',
     gender: 'male', // Default to male
     phone: '',
-    address: ''
+    address: '',
+    reserved_grant_amount: 0
   });
   
   const [loading, setLoading] = useState(!isNewClient);
@@ -58,13 +59,26 @@ function ClientForm() {
       setSubmitting(true);
       setError(null);
       
+      // Store the reserved grant amount for API call
+      const reservedAmount = formData.reserved_grant_amount;
+      
       if (isNewClient) {
         const response = await createClient(formData);
         // Navigate to the new client's page
-        navigate(`/client/${response.data.id}`);
+        const newClientId = response.data.id;
+        navigate(`/client/${newClientId}`);
+        
+        // If there's a reserved grant amount, make the API call
+        if (reservedAmount > 0) {
+          await reserveGrant(newClientId, reservedAmount);
+        }
       } else {
         // Update existing client
         await updateClient(id, formData);
+        
+        // Update reserved grant amount separately
+        await reserveGrant(id, reservedAmount);
+        
         setMessage('פרטי הלקוח עודכנו בהצלחה');
         // Refresh client data
         const response = await getClient(id);
@@ -204,6 +218,22 @@ function ClientForm() {
               value={formData.address}
               onChange={handleChange}
               className="form-input"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-gray-700 mb-2" htmlFor="reserved_grant_amount">
+              מענק עתידי משוריין
+            </label>
+            <input
+              type="number"
+              id="reserved_grant_amount"
+              name="reserved_grant_amount"
+              value={formData.reserved_grant_amount || 0}
+              onChange={handleChange}
+              className="form-input"
+              min="0"
+              step="0.01"
             />
           </div>
         </div>
