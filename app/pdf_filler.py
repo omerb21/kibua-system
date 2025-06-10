@@ -118,38 +118,69 @@ def generate_grants_appendix(client_id: int) -> str:
         print(f"חישוב מחדש של {len(grants)} מענקים ללקוח {client_id}")
         
         for grant in grants:
-            # חישוב מחדש בצורה מדויקת
-            indexed_full = index_grant(
-                amount=grant.grant_amount,
-                start_date=grant.work_start_date.isoformat(),
-                end_work_date=grant.work_end_date.isoformat(),
-                elig_date=eligibility_date.isoformat()
-            )
-            
-            ratio = work_ratio_within_last_32y(
-                grant.work_start_date,
-                grant.work_end_date,
-                eligibility_date
-            )
-            
-            # הסכום המוצמד כפול היחס
-            indexed_amount = indexed_full * ratio
-            impact = indexed_amount * 1.35
-            
-            # שמירת הנתונים המחושבים מחדש
-            recalculated_grant = {
-                'original': grant,
-                'indexed_full': indexed_full,
-                'ratio': ratio,
-                'indexed_amount': indexed_amount,
-                'impact': impact
-            }
-            recalculated_grants.append(recalculated_grant)
-            
-            print(f"מענק {grant.id}: סכום={grant.grant_amount}, מוצמד מלא={indexed_full}, יחס={ratio}, סכום מוצמד יחסי={indexed_amount}, השפעה={impact}")
+            try:
+                # בדיקת תקינות נתונים
+                if not grant.grant_amount:
+                    print(f"מענק {grant.id} חסר סכום - דילוג")
+                    continue
+                if not grant.work_start_date or not grant.work_end_date:
+                    print(f"מענק {grant.id} חסר תאריכים - דילוג")
+                    continue
+                
+                # חישוב מחדש בצורה מדויקת
+                indexed_full = index_grant(
+                    amount=grant.grant_amount,
+                    start_date=grant.work_start_date.isoformat(),
+                    end_work_date=grant.work_end_date.isoformat(),
+                    elig_date=eligibility_date.isoformat()
+                )
+                
+                # בדיקה שההצמדה הצליחה
+                if indexed_full is None:
+                    print(f"הצמדה נכשלה עבור מענק {grant.id} – דילוג")
+                    continue
+
+                # חישוב יחס העבודה
+                try:
+                    ratio = work_ratio_within_last_32y(
+                        grant.work_start_date,
+                        grant.work_end_date,
+                        eligibility_date
+                    )
+                    if ratio is None or ratio <= 0:
+                        print(f"יחס עבודה לא תקין עבור מענק {grant.id} - דילוג")
+                        continue
+                except Exception as ratio_error:
+                    print(f"שגיאה בחישוב יחס עבודה עבור מענק {grant.id}: {ratio_error}")
+                    continue
+                
+                # הסכום המוצמד כפול היחס
+                indexed_amount = indexed_full * ratio
+                impact = indexed_amount * 1.35
+                
+                # שמירת הנתונים המחושבים מחדש
+                recalculated_grant = {
+                    'original': grant,
+                    'indexed_full': indexed_full,
+                    'ratio': ratio,
+                    'indexed_amount': indexed_amount,
+                    'impact': impact,
+                    'relevant_nominal': grant.grant_amount * ratio  # סכום נומינלי רלוונטי
+                }
+                recalculated_grants.append(recalculated_grant)
+                
+                print(f"מענק {grant.id}: סכום={grant.grant_amount}, מוצמד מלא={indexed_full}, יחס={ratio}, סכום מוצמד יחסי={indexed_amount}, השפעה={impact}")
+            except Exception as e:
+                print(f"מענק {grant.id} נכשל ולא נכנס לנספח: {e}")
+                continue  # דילוג על מענק בעייתי
     
     # אם אין מענקים, לא ניצור נספח
     if not grants:
+        return None
+        
+    # אם כל המענקים נכשלו בהצמדה, לא ניצור נספח
+    if not recalculated_grants:
+        print(f"אין מענקים תקינים עבור לקוח {client_id}, הפקת נספח בוטלה.")
         return None
     
     # יצירת HTML טבלה
@@ -190,95 +221,43 @@ def generate_grants_appendix(client_id: int) -> str:
     '''
     
     # הוספת שורות לטבלה מהערכים המחושבים מחדש
+    # איפוס משתני סיכום
     total_nominal = 0
     total_indexed = 0
     total_impact = 0
+    total_relevant_nominal = 0
     
     # אם יש ערכים מחושבים מחדש, נשתמש בהם
     grants_to_use = recalculated_grants if recalculated_grants else [{'original': g, 'indexed_amount': g.grant_indexed_amount, 'ratio': g.grant_ratio, 'impact': g.impact_on_exemption} for g in grants]
     
-    # רישום קבועים לפי הנספח המדויק
-    # מענק ראשון
-    grant1 = None
-    grant2 = None
-    grant3 = None
-    
-    # מיון המענקים לפי תאריך סיום עבודה
+    # מיון המענקים לפי תאריך סיום עבודה ועיבוד כל מענק בנפרד
     for grant_data in grants_to_use:
         grant = grant_data['original']
-        if grant.work_end_date.year <= 1999:
-            grant1 = grant
-        elif grant.work_end_date.year <= 2011:
-            grant2 = grant
-        else:
-            grant3 = grant
-    
-    # ערכים קבועים מהנספח
-    # מענק ראשון
-    if grant1 is not None:
-        nominal1 = 100000.00
-        relevant_nominal1 = 46649.63  # חלק יחסי של המענק הנומינלי הרלוונטי לקיבוע זכויות
-        indexed_amount1 = 72562.58  # הסכום המוצמד האמיתי
-        impact1 = round(indexed_amount1 * 1.35, 2)  # 97959.48
+        nominal_amount = grant.grant_amount
+        relevant_nominal = grant_data.get('relevant_nominal', nominal_amount) 
+        indexed_amount = grant_data.get('indexed_amount', 0)
+        impact = grant_data.get('impact', 0)
+        
+        # הוספת סכומים לסיכום הכולל
+        total_nominal += nominal_amount
+        total_relevant_nominal += relevant_nominal
+        total_indexed += indexed_amount
+        total_impact += impact
         
         html_content += f'''
                 <tr>
-                    <td>{grant1.employer_name or ''}</td>
-                    <td>{grant1.work_start_date.strftime('%d/%m/%Y') if grant1.work_start_date else ''}</td>
-                    <td>{grant1.work_end_date.strftime('%d/%m/%Y') if grant1.work_end_date else ''}</td>
-                    <td>{format(nominal1, ',.2f')} ₪</td>
-                    <td>{grant1.grant_date.strftime('%d/%m/%Y') if grant1.grant_date else ''}</td>
-                    <td>{format(relevant_nominal1, ',.2f')} ₪</td>
-                    <td>{format(indexed_amount1, ',.2f')} ₪</td>
-                    <td>{format(impact1, ',.2f')} ₪</td>
+                    <td>{grant.employer_name or ''}</td>
+                    <td>{grant.work_start_date.strftime('%d/%m/%Y') if grant.work_start_date else ''}</td>
+                    <td>{grant.work_end_date.strftime('%d/%m/%Y') if grant.work_end_date else ''}</td>
+                    <td>{format(nominal_amount, ',.2f')} ₪</td>
+                    <td>{grant.grant_date.strftime('%d/%m/%Y') if grant.grant_date else ''}</td>
+                    <td>{format(relevant_nominal, ',.2f')} ₪</td>
+                    <td>{format(indexed_amount, ',.2f')} ₪</td>
+                    <td>{format(impact, ',.2f')} ₪</td>
                 </tr>
         '''
     
-    # מענק שני
-    if grant2 is not None:
-        nominal2 = 80000.00
-        relevant_nominal2 = 80000.00  # מלוא המענק הנומינלי כי כל התקופה בתוך 32 שנה
-        indexed_amount2 = 96786.70  # הסכום המוצמד האמיתי
-        impact2 = round(indexed_amount2 * 1.35, 2)  # 130662.04
-        
-        html_content += f'''
-                <tr>
-                    <td>{grant2.employer_name or ''}</td>
-                    <td>{grant2.work_start_date.strftime('%d/%m/%Y') if grant2.work_start_date else ''}</td>
-                    <td>{grant2.work_end_date.strftime('%d/%m/%Y') if grant2.work_end_date else ''}</td>
-                    <td>{format(nominal2, ',.2f')} ₪</td>
-                    <td>{grant2.grant_date.strftime('%d/%m/%Y') if grant2.grant_date else ''}</td>
-                    <td>{format(relevant_nominal2, ',.2f')} ₪</td>
-                    <td>{format(indexed_amount2, ',.2f')} ₪</td>
-                    <td>{format(impact2, ',.2f')} ₪</td>
-                </tr>
-        '''
-    
-    # מענק שלישי
-    if grant3 is not None:
-        nominal3 = 90000.00
-        relevant_nominal3 = 90000.00  # מלוא המענק הנומינלי כי כל התקופה בתוך 32 שנה
-        indexed_amount3 = 97990.89  # הסכום המוצמד האמיתי
-        impact3 = round(indexed_amount3 * 1.35, 2)  # 132287.70
-        
-        html_content += f'''
-                <tr>
-                    <td>{grant3.employer_name or ''}</td>
-                    <td>{grant3.work_start_date.strftime('%d/%m/%Y') if grant3.work_start_date else ''}</td>
-                    <td>{grant3.work_end_date.strftime('%d/%m/%Y') if grant3.work_end_date else ''}</td>
-                    <td>{format(nominal3, ',.2f')} ₪</td>
-                    <td>{grant3.grant_date.strftime('%d/%m/%Y') if grant3.grant_date else ''}</td>
-                    <td>{format(relevant_nominal3, ',.2f')} ₪</td>
-                    <td>{format(indexed_amount3, ',.2f')} ₪</td>
-                    <td>{format(impact3, ',.2f')} ₪</td>
-                </tr>
-        '''
-    
-    # חישוב הסיכומים הנכונים
-    total_nominal = 270000.00  # 100,000 + 80,000 + 90,000
-    total_relevant_nominal = 216649.63  # 46,649.63 + 80,000 + 90,000
-    total_indexed_amount = 267340.17  # 72,562.58 + 96,786.70 + 97,990.89
-    total_impact = 360909.22  # 97,959.48 + 130,662.04 + 132,287.70
+    # כל הסכומים כבר חושבו בלולאה לעיל ומוכנים להצגה
     
     # הוספת שורת סיכום
     html_content += f'''
@@ -287,7 +266,7 @@ def generate_grants_appendix(client_id: int) -> str:
                     <td>{format(total_nominal, ',.2f')} ₪</td>
                     <td></td>
                     <td>{format(total_relevant_nominal, ',.2f')} ₪</td>
-                    <td>{format(total_indexed_amount, ',.2f')} ₪</td>
+                    <td>{format(total_indexed, ',.2f')} ₪</td>
                     <td>{format(total_impact, ',.2f')} ₪</td>
                 </tr>
             </tbody>

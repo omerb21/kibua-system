@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request, send_file
 import os
+from datetime import datetime, date, timedelta
 from app.models import db, Client, Grant, Pension, Commutation
 from app.utils import (
     calculate_eligibility_age, 
@@ -291,22 +292,67 @@ def api_calculate_exemption_summary():
     """
     חישוב סיכום פטור כולל לקצבה ללקוח לפי המבנה החדש
     """
-    data = request.get_json()
-    client_id = data.get('client_id')
+    import traceback
     
     try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "לא התקבלו נתונים בבקשה"}), 400
+            
+        client_id = data.get('client_id')
+        if not client_id:
+            return jsonify({"error": "לא סופק מזהה לקוח"}), 400
+            
+        # קבלת תאריך הזכאות מהפרמטרים אם קיים
+        eligibility_date = data.get('eligibility_date')
+        
+        # בדיקה שהלקוח קיים
+        client = Client.query.get(client_id)
+        if not client:
+            return jsonify({"error": f"לקוח עם מזהה {client_id} לא נמצא"}), 404
+    
         # שימוש בפונקציה החדשה לחישוב הסיכום
-        summary = calculate_summary(client_id)
+        try:
+            # קריאה לפונקציה עם תאריך הזכאות אם קיים
+            summary = calculate_summary(client_id, eligibility_date)
+            
+            # עדכון בדטאבייס
+            db.session.commit()
+            
+            return jsonify(summary)
+            
+        except ValueError as e:
+            # הדפסת traceback מפורט
+            traceback.print_exc()
+            return jsonify({"error": str(e), "details": "בעיה בחישוב סיכום פטור"}), 400
+        except Exception as inner_e:
+            traceback.print_exc()
+            return jsonify({"error": f"שגיאה בחישוב סיכום: {str(inner_e)}"}), 400
         
-        # עדכון בדטאבייס
-        db.session.commit()
-        
-        return jsonify(summary)
-        
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
     except Exception as e:
-        return jsonify({"error": f"שגיאה בחישוב הסיכום: {str(e)}"}), 500
+        # הדפסת טרייסבק מפורט ללוג
+        traceback.print_exc()
+        print(f"שגיאה ב-api_calculate_exemption_summary: {str(e)}")
+        
+        # החזרת סיכום ריק במקרה של שגיאה חמורה
+        try:
+            empty_summary = {
+                "client_info": {"id": client_id if 'client_id' in locals() else 0},
+                "exempt_cap": 0,
+                "grants_nominal": 0,
+                "grants_indexed": 0,
+                "grants_impact": 0,
+                "commutations_impact": 0,
+                "remaining_cap": 0,
+                "monthly_cap": 0,
+                "pension_exempt": 0,
+                "pension_rate": 0,
+                "grant_note": f"אירעה שגיאה בחישוב הסיכום: {str(e)}"
+            }
+            return jsonify(empty_summary), 200  # מחזיר קוד 200 עם מבנה ריק במקום שגיאת 500
+        except:
+            traceback.print_exc()
+            return jsonify({"error": "שגיאה חמורה בחישוב סיכום"}), 500
 
 from app.pdf_filler import fill_pdf_form, generate_grants_appendix, generate_commutations_appendix
 from app.utils import calculate_summary
@@ -587,7 +633,9 @@ def download_pdf(doc_type, client_id):
             html_path = os.path.join(base_dir, "static", "generated", f"grants_appendix_{client_id}.html")
             download_name = f"grants_appendix_{client.first_name}_{client.last_name}.pdf"
             if not os.path.exists(pdf_path) and not os.path.exists(html_path):
-                generate_grants_appendix(client_id)
+                grants_appendix_path = generate_grants_appendix(client_id)
+                if grants_appendix_path is None:
+                    return jsonify({"error": "לא ניתן להפיק נספח מענקים - אין מענקים תקינים"}), 404
         elif doc_type == "commutations":
             pdf_path = os.path.join(base_dir, "static", "generated", f"commutations_appendix_{client_id}.pdf")
             html_path = os.path.join(base_dir, "static", "generated", f"commutations_appendix_{client_id}.html")
@@ -674,38 +722,65 @@ def calculate_exemption_summary():
 
 @main_bp.route("/api/fill-161d-pdf", methods=["POST"])
 def fill_161d_pdf():
-    data = request.get_json()
-    client_id = data["client_id"]
-    client = Client.query.get_or_404(client_id)
-    pension = client.pensions[0]
-    eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, pension.start_date)
-    grants = client.grants
-    commutations = [c for p in client.pensions for c in p.commutations]
+    try:
+        data = request.get_json()
+        client_id = data["client_id"]
+        client = Client.query.get_or_404(client_id)
+        
+        # בדיקה שיש לפחות פנסיה אחת
+        if not client.pensions:
+            return jsonify({"error": "לא נמצאו פנסיות ללקוח"}), 400
+            
+        pension = client.pensions[0]
+        eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, pension.start_date)
+        grants = client.grants
+        commutations = [c for p in client.pensions for c in p.commutations]
 
-    summary = {
-        "grant_total": calculate_total_grant_impact(grants),
-        "commutation_total": calculate_total_commutation_impact(commutations),
-        "exemption_cap": get_exemption_cap_by_year(eligibility_date.year),
-    }
-    summary["final_exemption"] = calculate_final_exempt_amount(
-        summary["exemption_cap"] - summary["grant_total"],
-        summary["commutation_total"]
-    )
+        # בדיקה אם יש מענקים תקינים שעברו הצמדה
+        valid_grants = []
+        for grant in grants:
+            try:
+                # בדיקה מהירה אם ניתן להצמיד את המענק (ללא שמירת תוצאה)
+                indexed = index_grant(
+                    amount=grant.grant_amount,
+                    start_date=grant.work_start_date.isoformat(),
+                    end_work_date=grant.work_end_date.isoformat(),
+                    elig_date=eligibility_date.isoformat()
+                )
+                if indexed is not None:
+                    valid_grants.append(grant)
+            except Exception:
+                continue
+                
+        if not valid_grants and grants:
+            print(f"אזהרה: אין מענקים תקינים שעברו הצמדה עבור לקוח {client_id}")
+            
+        summary = {
+            "grant_total": calculate_total_grant_impact(valid_grants if valid_grants else []),
+            "commutation_total": calculate_total_commutation_impact(commutations),
+            "exemption_cap": get_exemption_cap_by_year(eligibility_date.year),
+        }
+        summary["final_exemption"] = calculate_final_exempt_amount(
+            summary["exemption_cap"] - summary["grant_total"],
+            summary["commutation_total"]
+        )
 
-    form_data = {
-        "full_name": f"{client.first_name} {client.last_name}",
-        "tz": client.tz,
-        "birth_date": client.birth_date.strftime("%d/%m/%Y"),
-        "eligibility_date": eligibility_date.strftime("%d/%m/%Y"),
-        "grant_total": summary["grant_total"],
-        "commutation_total": summary["commutation_total"],
-        "exemption_cap": summary["exemption_cap"],
-        "final_exemption": summary["final_exemption"],
-    }
+        form_data = {
+            "full_name": f"{client.first_name} {client.last_name}",
+            "tz": client.tz,
+            "birth_date": client.birth_date.strftime("%d/%m/%Y"),
+            "eligibility_date": eligibility_date.strftime("%d/%m/%Y"),
+            "grant_total": summary["grant_total"],
+            "commutation_total": summary["commutation_total"],
+            "exemption_cap": summary["exemption_cap"],
+            "final_exemption": summary["final_exemption"],
+        }
 
-    input_pdf = "static/templates/161ד.pdf"
-    output_pdf = f"static/generated/161ד_מלא_{client_id}.pdf"
+        input_pdf = "static/templates/161ד.pdf"
+        output_pdf = f"static/generated/161ד_מלא_{client_id}.pdf"
 
-    fill_pdf_form(input_pdf, output_pdf, form_data)
+        fill_pdf_form(input_pdf, output_pdf, form_data)
 
-    return jsonify({"path": output_pdf})
+        return jsonify({"path": output_pdf})
+    except Exception as e:
+        return jsonify({"error": f"שגיאה ביצירת ה-PDF: {str(e)}"}), 500

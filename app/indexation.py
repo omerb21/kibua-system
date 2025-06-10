@@ -90,41 +90,38 @@ def ratio_last_32y(start_date, end_date, eligibility_date):
     return work_ratio_within_last_32y(start_date, end_date, eligibility_date)
 
 
-def work_ratio_within_last_32y(start, end, elig=None):
+def work_ratio_within_last_32y(start_date, end_date, elig_date):
     """
-    יחס ימי-עבודה הנכנסים לחלון 32 השנה האחרונות,
-    מחולק בכלל ימי-העבודה של המענק.
-    
-    העתק מדויק של הפונקציה המקורית calculate_relative_amount_with_logging
-    החישוב מתבצע לפי ההנחיות הנכונות:
-    1. תאריך הייחוס הוא התאריך הנוכחי, לא תאריך הזכאות
-    2. חלון 32 השנים מחושב כ- 365.25 * 32 ימים לאחור מהתאריך הנוכחי
+    מחשב את היחס של ימי העבודה בין start_date ל-end_date שנופלים
+    בתוך 32 השנים שקדמו ל-elig_date.
     """
     from datetime import datetime, timedelta
     
     try:
-        # העתק מדויק של הפונקציה המקורית
-        today = datetime.today().date()
-        limit_start = today - timedelta(days=365.25 * 32)
-        
-        # הבטחת תאריכים נכונים
-        if isinstance(start, str):
-            start = datetime.strptime(start, '%Y-%m-%d').date()
-        if isinstance(end, str):
-            end = datetime.strptime(end, '%Y-%m-%d').date()
+        # המרת תאריכים לאובייקטי date אם הם מחרוזות
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        if isinstance(elig_date, str):
+            elig_date = datetime.strptime(elig_date, '%Y-%m-%d').date()
             
-        total_days = (end - start).days
-        overlap_start = max(start, limit_start)
-        overlap_end = min(end, today)
+        today = elig_date  # השתמש תמיד בתאריך הזכאות
+        limit_start = today - timedelta(days=int(365.25 * 32))
+        
+        total_days = (end_date - start_date).days
+        overlap_start = max(start_date, limit_start)
+        overlap_end = min(end_date, today)
         overlap_days = max((overlap_end - overlap_start).days, 0)
         
-        # הגבלת היחס לתחום [0,1]
-        ratio = max(0, min(overlap_days / total_days, 1)) if total_days > 0 else 0
+        ratio = (overlap_days / total_days) if total_days > 0 else 0
+        # גבולות
+        ratio = min(max(ratio, 0), 1)
         
-        # מדפיסים את הנתונים לצורך דיבאג
-        print(f"[יחסי מענק] התחלה={start}, סיום={end}, חפיפה={overlap_days} ימים, יחס={ratio:.4f}")
-        
+        # לוג לפיקוח
+        print(f"[יחסי מענק] תאריך ייחוס={today}, התחלה={start_date}, "
+              f"סיום={end_date}, חפיפה={overlap_days} ימים, יחס={ratio:.4f}")
         return ratio
     except Exception as e:
-        print(f"[שגיאה ביחס מענק] התחלה={start}, סיום={end}, שגיאה: {str(e)}")
+        print(f"[שגיאה ביחס מענק] התחלה={start_date}, סיום={end_date}, שגיאה: {str(e)}")
         return 0.0

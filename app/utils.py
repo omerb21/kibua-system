@@ -1,5 +1,5 @@
-from datetime import date
 import requests
+from datetime import datetime, date, timedelta
 from sqlalchemy import func
 from app.models import Grant, Client, Pension, Commutation
 from app.exemption_caps import calc_exempt_capital, get_monthly_cap, get_exemption_percentage
@@ -162,15 +162,16 @@ def calculate_final_exempt_amount(exemption_cap_remaining: float, commutation_im
     return round(max(exemption_cap_remaining - commutation_impact, 0), 2)
 
 
-def calculate_summary(client_id: int) -> dict:
+def calculate_summary(client_id: int, eligibility_date=None) -> dict:
     """
     מחשב את סיכום הפטור המלא ללקוח לפי המבנה החדש
     
     Args:
         client_id: מזהה הלקוח
+        eligibility_date: תאריך זכאות ספציפי (אופציונלי)
         
     Returns:
-        מילון עם כל פרטי הסיכום
+        מילון עם כל פרטי הסיכום כולל הפרדה בין סכום מוצמד מלא וסכום מוגבל ל-32 שנים
     """
     # שלב 1: קבלת נתוני הלקוח
     client = Client.query.get_or_404(client_id)
@@ -179,8 +180,15 @@ def calculate_summary(client_id: int) -> dict:
     first_pension = Pension.query.filter_by(client_id=client_id).order_by(Pension.start_date).first()
     
     # שלב 1: קביעת שנת הזכאות
-    # אם אין קצבה, נשתמש בתאריך ברירת מחדל - גיל הפרישה הרגיל לפי המגדר
-    if not first_pension:
+    # אם התקבל תאריך זכאות מבחוץ, השתמש בו
+    if eligibility_date:
+        # אם התקבל כמחרוזת, המר לתאריך
+        if isinstance(eligibility_date, str):
+            from datetime import datetime
+            eligibility_date = datetime.fromisoformat(eligibility_date).date()
+        elig_year = eligibility_date.year
+    # אחרת חשב לפי כללי ברירת המחדל
+    elif not first_pension:
         current_date = datetime.now().date()
         eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, current_date)
         elig_year = eligibility_date.year
@@ -196,9 +204,12 @@ def calculate_summary(client_id: int) -> dict:
     
     # חישוב סכומים נומינליים ומוצמדים
     nominal_total = 0
-    indexed_total = 0
+    indexed_total_full = 0    # סכום מוצמד מלא (ללא הגבלת 32 שנים)
+    indexed_total_limited = 0 # סכום מוצמד מוגבל ל-32 שנים
+    valid_grants_count = 0
     
     from app.routes import process_grant  # Import here to avoid circular imports
+    from app.indexation import index_grant, work_ratio_within_last_32y
 
     for grant in grants:
         # חישוב סכום מוצמד
@@ -207,12 +218,48 @@ def calculate_summary(client_id: int) -> dict:
             
         nominal_total += grant.grant_amount
         
-        # עיבוד המענק עם הפונקציה החדשה (הצמדה אמיתית לפי API)
-        process_grant(grant, eligibility_date)
-        
-        # חישוב הסכומים המוצמדים לפי תוצאות העיבוד
-        if grant.grant_indexed_amount and grant.grant_ratio:
-            indexed_total += grant.grant_indexed_amount
+        try:
+            # הצמדה מלאה לפי API
+            indexed_full = index_grant(
+                amount=grant.grant_amount,
+                start_date=grant.work_start_date.isoformat(),
+                end_work_date=grant.work_end_date.isoformat(),
+                elig_date=eligibility_date.isoformat()
+            )
+            
+            if indexed_full is None:
+                continue
+                
+            # חישוב היחס של 32 השנים האחרונות
+            ratio = work_ratio_within_last_32y(
+                grant.work_start_date, 
+                grant.work_end_date, 
+                eligibility_date
+            )
+            
+            # חישוב הסכום המוגבל = מוצמד מלא * יחס
+            indexed_limited = indexed_full * ratio
+            
+            # הוספה לסכומים הכוללים
+            indexed_total_full += indexed_full
+            indexed_total_limited += indexed_limited
+            valid_grants_count += 1
+            
+            # שמירת הנתונים באובייקט המענק לשימוש בנספחים
+            grant.grant_indexed_amount = indexed_full
+            grant.grant_ratio = ratio
+            grant.impact_on_exemption = indexed_limited
+            grant.limited_indexed_amount = indexed_limited
+            
+        except Exception as e:
+            print(f"שגיאה בעיבוד מענק {grant.id}: {e}")
+            continue
+    
+    # לוג במקרה שאין מענקים תקינים אך קיימים מענקים ברשומה
+    grant_note = None
+    if valid_grants_count == 0 and grants:
+        grant_note = "לא נמצאו מענקים תקינים. נא לבדוק נתוני תאריכים או סכומים."
+        print(f"אזהרה: אין מענקים תקינים שעברו הצמדה עבור לקוח {client_id}")
     
     # שלב 4: חישוב סך ההיוונים
     # שליפת היוונים מכל הקצבאות
@@ -227,7 +274,8 @@ def calculate_summary(client_id: int) -> dict:
                 comm_total += comm.amount
     
     # שלב 5: חישוב יתרת תקרה
-    grants_impact = indexed_total * 1.35
+    # פגיעה בתקרה מחושבת רק על המענקים המוגבלים ל-32 שנים
+    grants_impact = indexed_total_limited * 1.35 if indexed_total_limited > 0 else 0
     
     # חישוב הפחתת מענק עתידי
     reserved_impact = 0
@@ -261,8 +309,9 @@ def calculate_summary(client_id: int) -> dict:
         # סיכום חישובים לפי הסדר החדש
         "exempt_cap": round(exempt_cap, 2),                  # 1. תקרת ההון הפטורה
         "grants_nominal": round(nominal_total, 2),           # 2. סך מענקים פטורים נומינליים
-        "grants_indexed": round(indexed_total, 2),           # 3. סך מענקים פטורים מוצמדים
-        "grants_impact": round(grants_impact, 2),            # 4. סך פגיעה בפטור = (3) × 1.35
+        "grants_indexed_full": round(indexed_total_full, 2),  # 3A. סך מענקים פטורים מוצמדים ללא הגבלה
+        "grants_indexed_limited": round(indexed_total_limited, 2), # 3B. סך מענקים פטורים מוצמדים מוגבלים ל-32 שנים
+        "grants_impact": round(grants_impact, 2),            # 4. סך פגיעה בפטור = (3B) × 1.35
         "reserved_grant_nominal": round(client.reserved_grant_amount, 2) if client.reserved_grant_amount else 0,  # 4.1 מענק עתידי משוריין (נומינלי)
         "reserved_grant_impact": round(reserved_impact, 2),   # 4.2 השפעת מענק עתידי (×1.35)
         "commutations_total": round(comm_total, 2),           # 5. סך היוונים
@@ -274,7 +323,11 @@ def calculate_summary(client_id: int) -> dict:
         "details": {
             "grants_count": len(grants),
             "commutations_count": len(commutations)
-        }
+        },
+        "grant_note": grant_note
     }
+    
+    # ליותר תאימות לאחור, משאירים את הערך הישן במקום grants_indexed
+    summary["grants_indexed"] = summary["grants_indexed_limited"]
     
     return summary
