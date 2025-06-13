@@ -11,13 +11,30 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 
 from pdfrw import PdfReader, PdfWriter, PdfDict, PdfObject, PdfString
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _safe_write(pdf_reader, path: Path) -> Path:
+    """Write *pdf_reader* to *path*; if locked, write to timestamped alt file."""
+    try:
+        if path.exists():
+            try:
+                path.unlink()
+            except PermissionError:
+                raise
+        PdfWriter().write(str(path), pdf_reader)
+        return path
+    except PermissionError:
+        ts = datetime.now().strftime("%H%M%S")
+        alt = path.with_stem(f"{path.stem}_{ts}")
+        print(f"⚠️ Permission denied; writing to {alt}")
+        PdfWriter().write(str(alt), pdf_reader)
+        return alt
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 TEMPLATE_PATH = STATIC_DIR / "templates" / "161d.pdf"
@@ -39,7 +56,7 @@ def _update_widget(widget, value: str) -> None:
     widget.AP = PdfDict()  # clear appearance so Acrobat redraws
 
 
-def _fill_pdf(data: Dict[str, str], output_path: Path) -> int:
+def _fill_pdf(data: Dict[str, str], output_path: Path) -> Tuple[int, Path]:
     """Fill *TEMPLATE_PATH* with *data* and save to *output_path*.
 
     Returns number of updated fields.
@@ -66,8 +83,8 @@ def _fill_pdf(data: Dict[str, str], output_path: Path) -> int:
                 updated += 1
 
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
-    PdfWriter().write(str(output_path), reader)
-    return updated
+    output_path = _safe_write(reader, output_path)
+    return updated, output_path
 
 
 # ---------------------------------------------------------------------------
@@ -104,15 +121,20 @@ def fill_161d(client_id: int) -> str:
         if isinstance(summary.get("client_info", {}).get("eligibility_date", ""), str)
         else "",
         "Clientmaanakpatur": safe("grants_nominal"),
-        "Clientpgiabahon": safe("grants_impact"),
+        # Impact on exempt capital from all grants (not future reserved one)
+        "Clientpgiabahon": (
+            f"{summary.get('grants_impact', 0):,.2f}" if summary.get("grants_impact") else ""
+        ),
+        "clientshiryun": (
+            f"{summary.get('reserved_grant_nominal', 0):,.2f}" if summary.get("reserved_grant_nominal") else ""
+        ),
         "clientcapsum": safe("commutations_total"),
-        "clientshiryun": safe("remaining_exemption"),
     }
 
     output = GENERATED_DIR / f"161d_{client_id}.pdf"
-    count = _fill_pdf(data, output)
-    print(f"Updated {count}/12 fields → {output}")
-    return str(output)
+    count, final_path = _fill_pdf(data, output)
+    print(f"✅ Updated {count}/12 → {final_path}")
+    return str(final_path)
 
 
 # ---------------------------------------------------------------------------
