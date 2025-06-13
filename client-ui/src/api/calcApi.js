@@ -15,8 +15,11 @@ export function calculateExemptionSummary(clientId, forceRecalculation = false) 
   });
 }
 
-export function fillForm161d(clientId) {
-  return axios.post('/api/fill-161d-pdf', { client_id: clientId });
+// Download filled 161d PDF as Blob
+export function download161d(clientId) {
+  return axios.get(`/api/clients/${clientId}/161d`, {
+    responseType: 'blob',
+  });
 }
 
 export function generateGrantsAppendix(clientId) {

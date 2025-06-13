@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { fillForm161d, generateGrantsAppendix, generateCommutationsAppendix } from '../api/calcApi';
+import { download161d, generateGrantsAppendix, generateCommutationsAppendix } from '../api/calcApi';
 
 function DocumentPanel() {
   const { id: clientId } = useParams();
@@ -23,8 +23,9 @@ function DocumentPanel() {
       setLoading(true);
       setError(null);
       
-      const response = await fillForm161d(clientId);
-      setGeneratedPdf(response.data);
+      const { data } = await download161d(clientId);
+      const url = URL.createObjectURL(data);
+      setGeneratedPdf(url);
     } catch (err) {
       setError('שגיאה בהפקת הטופס');
       console.error(err);
@@ -88,7 +89,7 @@ function DocumentPanel() {
             </div>
             
             <a 
-              href={generatedPdf.main_pdf?.download_url || generatedPdf.download_url}
+              href={generatedPdf}
               target="_blank"
               rel="noopener noreferrer"
               className="btn flex items-center justify-center"

@@ -10,7 +10,7 @@ from app.utils import (
 )
 from app.indexation import index_grant, work_ratio_within_last_32y
 from app.exemption_caps import get_exemption_cap_by_year
-from datetime import date, datetime
+from app.pdf_fillers.form161d import fill_161d  # new minimal 161d filler
 
 def process_grant(grant, eligibility_date):
     # הצמדה אמיתית לפי API
@@ -287,6 +287,54 @@ def api_calculate_grant_impact():
     
     return jsonify(result)
 
+
+@main_bp.route('/api/generate-161d', methods=['POST'])
+def api_generate_161d_form():
+    """
+    הפקת טופס 161d
+    """
+    import traceback
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "לא התקבלו נתונים בבקשה"}), 400
+            
+        client_id = data.get('client_id')
+        if not client_id:
+            return jsonify({"error": "לא סופק מזהה לקוח"}), 400
+        
+        # בדיקה שהלקוח קיים
+        client = Client.query.get(client_id)
+        if not client:
+            return jsonify({"error": f"לקוח עם מזהה {client_id} לא נמצא"}), 404
+    
+        # יצירת הטופס
+        from app.pdf_filler import fill_161d_form
+        try:
+            output_path = fill_161d_form(client_id)
+            
+            # נתיב יחסי לקובץ שנוצר
+            relative_path = output_path.replace(os.path.join(os.getcwd()), '').replace('\\', '/')
+            if relative_path.startswith('/'):
+                relative_path = relative_path[1:]
+            
+            return jsonify({
+                "success": True,
+                "message": "טופס 161d הופק בהצלחה",
+                "file_path": relative_path,
+                "download_url": f"/static/generated/161d_client_{client_id}.pdf"
+            })
+            
+        except Exception as inner_e:
+            traceback.print_exc()
+            return jsonify({"error": f"שגיאה בהפקת הטופס: {str(inner_e)}"})  
+            
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"שגיאה כללית: {str(e)}"}), 500
+
+
 @main_bp.route('/api/calculate-exemption-summary', methods=['POST'])
 def api_calculate_exemption_summary():
     """
@@ -354,7 +402,7 @@ def api_calculate_exemption_summary():
             traceback.print_exc()
             return jsonify({"error": "שגיאה חמורה בחישוב סיכום"}), 500
 
-from app.pdf_filler import fill_pdf_form, generate_grants_appendix, generate_commutations_appendix
+from app.pdf_filler import generate_grants_appendix, generate_commutations_appendix  # legacy
 from app.utils import calculate_summary
 
 # קבלת רשימת מענקים ללקוח
@@ -485,6 +533,7 @@ def api_generate_grants_appendix():
         return jsonify(response)
         
     except Exception as e:
+        import traceback; traceback.print_exc()
         return jsonify({"error": f"שגיאה ביצירת נספח מענקים: {str(e)}"}), 500
 
 @main_bp.route("/api/generate-commutations-appendix", methods=["POST"])
@@ -513,103 +562,22 @@ def api_generate_commutations_appendix():
         return jsonify(response)
         
     except Exception as e:
+        import traceback; traceback.print_exc()
         return jsonify({"error": f"שגיאה ביצירת נספח היוונים: {str(e)}"}), 500
 
-@main_bp.route("/api/fill-161d-pdf", methods=["POST"])
-def api_fill_161d_pdf():
-    """
-    מקבל מזהה לקוח, מחשב את סיכום הפטור לקצבה, וממלא טופס 161ד
-    """
-    try:
-        data = request.get_json()
-        client_id = data["client_id"]
-    
-        # שליפת נתוני הלקוח
-        client = Client.query.get_or_404(client_id)
-        
-        # חישוב הסיכום עם הפונקציה החדשה
-        summary = calculate_summary(client_id)
-        
-        # קבלת תאריכים נדרשים
-        elig_date = datetime.fromisoformat(summary["client_info"]["eligibility_date"])
-    
-        # הכנת נתונים למילוי הטופס לפי המבנה החדש
-        form_data = {
-            # פרטי לקוח
-            "full_name": f"{client.first_name} {client.last_name}",
-            "tz": client.tz,
-            "birth_date": client.birth_date.strftime("%d/%m/%Y"),
-            "eligibility_date": elig_date.strftime("%d/%m/%Y"),
-            
-            # סיכום חישובים לפי הסדר החדש
-            "cap_exempt": str(summary["exempt_cap"]),                 # 1. תקרת ההון הפטורה
-            "grants_nominal": str(summary["grants_nominal"]),         # 2. סך מענקים פטורים נומינליים
-            "grants_indexed": str(summary["grants_indexed"]),         # 3. סך מענקים פטורים מוצמדים
-            "grants_impact": str(summary["grants_impact"]),           # 4. סך פגיעה בפטור
-            "reserved_grant_nominal": str(summary["reserved_grant_nominal"]),  # 4.1 מענק עתידי משוריין (נומינלי)
-            "reserved_grant_impact": str(summary["reserved_grant_impact"]),    # 4.2 השפעת מענק עתידי (×1.35)
-            "comm_total": str(summary["commutations_total"]),         # 5. סך היוונים
-            "remaining_cap": str(summary["remaining_cap"]),           # 6. הפרש תקרת הון פטורה
-            "monthly_cap": str(summary["monthly_cap"]),               # 7. תקרת קצבה מזכה
-            "pension_exempt": str(summary["pension_exempt"]),         # 8. קצבה פטורה מחושבת
-            "pension_rate": f'{summary["pension_rate"]}%',            # 9. אחוז הקצבה הפטורה
-        }
-    
-        # נתיבים לקבצי PDF
-        base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-        
-        # Use ASCII file names to avoid encoding issues
-        input_pdf = os.path.join(base_dir, "static", "templates", "form161d.pdf")
-        template_file = os.path.join(base_dir, "static", "templates", "161ד.pdf")
-        
-        # If the ASCII file doesn't exist but the Hebrew one does, make a copy
-        if not os.path.exists(input_pdf) and os.path.exists(template_file):
-            import shutil
-            shutil.copy(template_file, input_pdf)
-        
-        output_dir = os.path.join(base_dir, "static", "generated")
-        
-        # וידוא שהתיקייה קיימת
-        os.makedirs(output_dir, exist_ok=True)
-        
-        output_pdf = os.path.join(output_dir, f"form161d_{client_id}.pdf")
-    
-        # מילוי הטופס
-        fill_pdf_form(input_pdf, output_pdf, form_data)
-        
-        # יצירת נספחים
-        grants_appendix_path = generate_grants_appendix(client_id)
-        commutations_appendix_path = generate_commutations_appendix(client_id)
-        
-        # הכנת נתיבים יחסיים
-        response = {
-            "message": "PDF נוצר בהצלחה", 
-            "main_pdf": {
-                "path": f"static/generated/form161d_{client_id}.pdf",
-                "download_url": f"/download-pdf/161d/{client_id}"
-            }
-        }
-        
-        # הוספת נתיבי הנספחים אם נוצרו
-        if grants_appendix_path:
-            response["grants_appendix"] = {
-                "path": f"static/generated/grants_appendix_{client_id}.pdf",
-                "download_url": f"/download-pdf/grants/{client_id}"
-            }
-            
-        if commutations_appendix_path:
-            response["commutations_appendix"] = {
-                "path": f"static/generated/commutations_appendix_{client_id}.pdf",
-                "download_url": f"/download-pdf/commutations/{client_id}"
-            }
-        
-        return jsonify(response)
-        
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
-    except Exception as e:
-        return jsonify({"error": f"שגיאה ביצירת ה-PDF: {str(e)}"}), 500
+# -----------------------------------------------------------
+# טופס 161ד
+# -----------------------------------------------------------
 
+@main_bp.route("/api/clients/<int:client_id>/161d", methods=["GET"])
+def download_161d(client_id):
+    """Generate and download filled 161d form for the given client using simple filler."""
+    try:
+        output_path = fill_161d(client_id)
+        return send_file(output_path, as_attachment=True, download_name=f"161d_{client_id}.pdf")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": f"שגיאה ביצירת טופס 161ד: {str(e)}"}), 500
 
 @main_bp.route("/download-pdf/<string:doc_type>/<int:client_id>", methods=["GET"])
 def download_pdf(doc_type, client_id):
@@ -666,6 +634,7 @@ def download_pdf(doc_type, client_id):
             download_name=download_name
         )
     except Exception as e:
+        import traceback; traceback.print_exc()
         print(f"Error in download_pdf: {str(e)}")
         return jsonify({"error": f"שגיאה בהורדת המסמך: {str(e)}"}), 500
     
@@ -722,65 +691,26 @@ def calculate_exemption_summary():
 
 @main_bp.route("/api/fill-161d-pdf", methods=["POST"])
 def fill_161d_pdf():
+    """
+    ממלא טופס 161ד עם נתוני הלקוח ושולח את הקובץ להורדה
+    """
     try:
+        # קבלת מזהה הלקוח
         data = request.get_json()
         client_id = data["client_id"]
-        client = Client.query.get_or_404(client_id)
         
-        # בדיקה שיש לפחות פנסיה אחת
-        if not client.pensions:
-            return jsonify({"error": "לא נמצאו פנסיות ללקוח"}), 400
-            
-        pension = client.pensions[0]
-        eligibility_date = calculate_eligibility_age(client.birth_date, client.gender, pension.start_date)
-        grants = client.grants
-        commutations = [c for p in client.pensions for c in p.commutations]
-
-        # בדיקה אם יש מענקים תקינים שעברו הצמדה
-        valid_grants = []
-        for grant in grants:
-            try:
-                # בדיקה מהירה אם ניתן להצמיד את המענק (ללא שמירת תוצאה)
-                indexed = index_grant(
-                    amount=grant.grant_amount,
-                    start_date=grant.work_start_date.isoformat(),
-                    end_work_date=grant.work_end_date.isoformat(),
-                    elig_date=eligibility_date.isoformat()
-                )
-                if indexed is not None:
-                    valid_grants.append(grant)
-            except Exception:
-                continue
-                
-        if not valid_grants and grants:
-            print(f"אזהרה: אין מענקים תקינים שעברו הצמדה עבור לקוח {client_id}")
-            
-        summary = {
-            "grant_total": calculate_total_grant_impact(valid_grants if valid_grants else []),
-            "commutation_total": calculate_total_commutation_impact(commutations),
-            "exemption_cap": get_exemption_cap_by_year(eligibility_date.year),
-        }
-        summary["final_exemption"] = calculate_final_exempt_amount(
-            summary["exemption_cap"] - summary["grant_total"],
-            summary["commutation_total"]
-        )
-
-        form_data = {
-            "full_name": f"{client.first_name} {client.last_name}",
-            "tz": client.tz,
-            "birth_date": client.birth_date.strftime("%d/%m/%Y"),
-            "eligibility_date": eligibility_date.strftime("%d/%m/%Y"),
-            "grant_total": summary["grant_total"],
-            "commutation_total": summary["commutation_total"],
-            "exemption_cap": summary["exemption_cap"],
-            "final_exemption": summary["final_exemption"],
-        }
-
-        input_pdf = "static/templates/161ד.pdf"
-        output_pdf = f"static/generated/161ד_מלא_{client_id}.pdf"
-
-        fill_pdf_form(input_pdf, output_pdf, form_data)
-
-        return jsonify({"path": output_pdf})
+        # קריאה לפונקציה החדשה למילוי טופס 161ד
+        from app.pdf_filler import fill_161d_form
+        
+        # הפונקציה מחזירה את נתיב הקובץ שנוצר
+        output_path = fill_161d_form(client_id)
+        
+        # שליחת הקובץ ללקוח
+        return send_file(output_path, as_attachment=True)
+        
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": f"שגיאה ביצירת ה-PDF: {str(e)}"}), 500
+
+# שימוש בפונקציה הפשוטה החדשה למילוי 161ד

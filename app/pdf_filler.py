@@ -3,7 +3,7 @@ import tempfile
 import pdfkit
 import subprocess
 import platform
-from datetime import datetime
+from datetime import datetime, date
 from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
 from app.models import Client, Grant, Pension, Commutation
 
@@ -311,6 +311,117 @@ def generate_grants_appendix(client_id: int) -> str:
         output_path = html_temp_file
     
     return output_path
+
+
+def fill_161d_form(client_id: int) -> str:
+    """
+    ממלא טופס 161ד עם נתוני הלקוח
+    
+    Args:
+        client_id: מזהה הלקוח
+        
+    Returns:
+        נתיב לקובץ ה-PDF שנוצר
+    """
+    from pathlib import Path
+    from app.utils import calculate_eligibility_age, calculate_summary
+    
+    client = Client.query.get_or_404(client_id)
+    
+    # חישוב סיכום מלא עם כל הנתונים הדרושים
+    summary = calculate_summary(client_id)
+    print("### Summary keys:", list(summary.keys()))
+    
+    # פונקציית עזר לגישה בטוחה לתכונות
+    def safe_value(dict_obj, key, default=0):
+        return dict_obj.get(key, default)
+    
+    # פונקציה לעיצוב מספרים
+    def format_number(value, default=''):
+        if value in (None, ''):
+            return default
+        try:
+            return f'{float(value):,.2f}'
+        except (ValueError, TypeError):
+            return default
+    
+    # הכן את הערכים בדיוק לפי שמות השדות בתבנית (case-sensitive)
+    unicode_vals = {
+        'Today':             date.today().strftime('%d/%m/%Y'),
+        'ClientFirstName':   client.first_name or '',
+        'ClientLastName':    client.last_name or '',
+        'ClientID':          client.tz or '',           # חייב ID באותיות גדולות!
+        'ClientAddress':     client.address or '',
+        'Clientphone':       client.phone or '',        # חייב phone באות קטנה!
+        'ClientBdate':       client.birth_date.strftime('%d/%m/%Y') if client.birth_date else '',
+        'ClientZdate':       summary.get('client_info', {}).get('eligibility_date', '').split('T')[0] if isinstance(summary.get('client_info', {}).get('eligibility_date', ''), str) else '',
+        'Clientmaanakpatur': format_number(safe_value(summary, 'grants_nominal')),
+        'Clientpgiabahon':   format_number(safe_value(summary, 'grants_impact')),
+        'clientcapsum':      format_number(safe_value(summary, 'commutations_total')),
+        'clientshiryun':     format_number(safe_value(summary, 'remaining_exemption')),
+    }
+    
+    # טען את התבנית
+    template_path = Path('static/templates/161d.pdf')
+    reader = PdfReader(template_path)
+    writer = PdfWriter()
+    writer.addpages(reader.pages)
+    
+    # מלא את השדות
+    fields = reader.Root.AcroForm.Fields or []
+    updated = 0
+    
+    # קודם לכל - הדפס את המפתחות הקיימים כדי להשוות
+    print("### unicode_vals keys →", sorted(list(unicode_vals.keys())))
+    
+    # אוסף את כל שמות השדות בטופס
+    form_field_names = set()
+    for parent in fields:
+        for widget in _get_all_widgets(parent):
+            if widget.get('T'):
+                key = _clean_field_name(widget.T)
+                form_field_names.add(key)
+    print("### form field names  →", sorted(list(form_field_names)))
+    
+    # עכשיו מלא את השדות
+    for parent in fields:
+        for widget in _get_all_widgets(parent):
+            if widget.get('T'):
+                raw = widget.T
+                key = _clean_field_name(raw)
+                print("### RAW", repr(raw), "→", repr(key))
+                if key in unicode_vals:
+                    widget.V = unicode_vals[key]
+                    widget.AP = ''  # נקה הופעה ישנה
+                    updated += 1
+                    print(f"### Updated field '{key}' with value: {unicode_vals[key]}")
+                else:
+                    print(f"### MISSING key '{key}' not found in unicode_vals!")
+    
+    print(f"Updated {updated} of {len(unicode_vals)} fields")
+    
+    # שמירה
+    output_dir = Path('static/generated')
+    output_dir.mkdir(exist_ok=True)
+    output = output_dir/f'161d_client_{client.id}.pdf'
+    
+    # טיפול בקובץ קיים / בעיות הרשאה
+    try:
+        if output.exists():
+            try:
+                output.unlink()
+            except PermissionError:
+                ts = datetime.now().strftime('%H%M%S')
+                output = output.with_stem(f"{output.stem}_{ts}")
+                print(f"Permission issue - saving to alternate file: {output}")
+        writer.write(str(output), reader)
+    except PermissionError:
+        ts = datetime.now().strftime('%H%M%S')
+        output = output.with_stem(f"{output.stem}_{ts}")
+        print(f"Permission issue on write - saving to alternate file: {output}")
+        writer.write(str(output), reader)
+    
+    return str(output)
 
 
 def generate_commutations_appendix(client_id: int) -> str:
