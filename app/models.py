@@ -18,6 +18,19 @@ class Client(db.Model):
     gender = Column(String(10))  # Added gender field for eligibility age calculation
     reserved_grant_amount = db.Column(db.Float, default=0.0)  # Amount of future grant to be reserved
     
+    def slugify_name(self):
+        """Generate a URL-friendly filename from the client's name"""
+        import re
+        from unicodedata import normalize
+        
+        # Convert to ASCII and remove special characters
+        name = f"{self.first_name or ''}_{self.last_name or ''}".strip('_')
+        name = normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
+        name = re.sub(r'[^\w\s-]', '', name).strip().lower()
+        name = re.sub(r'[-\s]+', '_', name)
+        
+        return name or 'client'
+        
     def to_dict(self):
         return {
             "id": self.id,
