@@ -57,9 +57,7 @@ function ClientPage() {
             <Link to={`/client/${id}/summary`} className="btn-secondary ml-2">
               סיכום קיבוע זכויות
             </Link>
-            <Link to={`/client/${id}/documents`} className="btn-secondary">
-              הפקת מסמכים
-            </Link>
+
           </div>
         )}
       </div>

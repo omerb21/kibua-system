@@ -2,7 +2,6 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import ClientPage from './pages/ClientPage';
 import SummaryPage from './pages/SummaryPage';
-import DocumentsPage from './pages/DocumentsPage';
 import Navbar from './components/Navbar';
 
 function App() {
@@ -15,7 +14,6 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/client/:id" element={<ClientPage />} />
             <Route path="/client/:id/summary" element={<SummaryPage />} />
-            <Route path="/client/:id/documents" element={<DocumentsPage />} />
           </Routes>
         </main>
       </div>

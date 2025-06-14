@@ -102,12 +102,7 @@ function ClientList() {
                       >
                         סיכום
                       </Link>
-                      <Link 
-                        to={`/client/${client.id}/documents`}
-                        className="text-purple-600 hover:underline ml-2"
-                      >
-                        מסמכים
-                      </Link>
+
                       <Link 
                         to={`/client/${client.id}/edit`}
                         className="text-orange-600 hover:underline ml-2"

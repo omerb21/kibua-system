@@ -21,6 +21,8 @@ from pdfrw import PdfReader, PdfWriter, PdfDict, PdfObject, PdfString
 
 def _safe_write(pdf_reader, path: Path) -> Path:
     """Write *pdf_reader* to *path*; if locked, write to timestamped alt file."""
+    # Ensure directory exists
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
         if path.exists():
             try:
@@ -82,7 +84,7 @@ def _fill_pdf(data: Dict[str, str], output_path: Path) -> Tuple[int, Path]:
                 _update_widget(kid, data[kname])
                 updated += 1
 
-    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    # Directory safety is handled inside _safe_write
     output_path = _safe_write(reader, output_path)
     return updated, output_path
 
@@ -92,7 +94,7 @@ def _fill_pdf(data: Dict[str, str], output_path: Path) -> Tuple[int, Path]:
 # ---------------------------------------------------------------------------
 
 
-def fill_161d(client_id: int) -> str:
+def fill_161d(client_id: int, out_dir: Path | str | None = None) -> str:
     """Fill טופס 161ד for *client_id* and return absolute output path.
 
     The function fetches the client and summary information from the DB and
@@ -131,7 +133,12 @@ def fill_161d(client_id: int) -> str:
         "clientcapsum": safe("commutations_total"),
     }
 
-    output = GENERATED_DIR / f"161d_{client_id}.pdf"
+    if out_dir:
+        out_dir_path = Path(out_dir)
+        out_dir_path.mkdir(parents=True, exist_ok=True)
+        output = out_dir_path / "161d.pdf"
+    else:
+        output = GENERATED_DIR / f"161d_{client_id}.pdf"
     count, final_path = _fill_pdf(data, output)
     print(f"✅ Updated {count}/12 → {final_path}")
     return str(final_path)

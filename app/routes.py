@@ -11,6 +11,9 @@ from app.utils import (
 from app.indexation import index_grant, work_ratio_within_last_32y
 from app.exemption_caps import get_exemption_cap_by_year
 from app.pdf_fillers.form161d import fill_161d  # new minimal 161d filler
+from pathlib import Path
+import shutil
+import re
 
 def process_grant(grant, eligibility_date):
     # הצמדה אמיתית לפי API
@@ -591,11 +594,10 @@ def download_pdf(doc_type, client_id):
         # הגדרת הנתיבים ושמות הקבצים לפי סוג המסמך
         # Try generating the file if it doesn't exist
         if doc_type == "161d":
-            pdf_path = os.path.join(base_dir, "static", "generated", f"form161d_{client_id}.pdf")
-            html_path = os.path.join(base_dir, "static", "generated", f"form161d_{client_id}.html")
+            # Generate the 161d PDF using the simplified filler; the function returns the path to the created file.
+            pdf_path = fill_161d(client_id)
             download_name = f"161d_{client.first_name}_{client.last_name}_{client.tz}.pdf"
-            if not os.path.exists(pdf_path) and not os.path.exists(html_path):
-                fill_161d_pdf(client_id, save_pdf=True)
+            html_path = ""  # Not applicable for this document type
         elif doc_type == "grants":
             pdf_path = os.path.join(base_dir, "static", "generated", f"grants_appendix_{client_id}.pdf")
             html_path = os.path.join(base_dir, "static", "generated", f"grants_appendix_{client_id}.html")
@@ -638,10 +640,56 @@ def download_pdf(doc_type, client_id):
         print(f"Error in download_pdf: {str(e)}")
         return jsonify({"error": f"שגיאה בהורדת המסמך: {str(e)}"}), 500
     
-# שמירת נתיב ישן לתאימות לאחור
+# -----------------------------------------------------------
+# הפקת חבילת מסמכים ללקוח
+# -----------------------------------------------------------
+@main_bp.route("/api/clients/<int:cid>/package", methods=["POST"])
+def generate_package(cid):
+    """Generate a full client document package (161d + appendices) and return the folder path."""
+    try:
+        client = Client.query.get_or_404(cid)
+        # Create slugified folder name: replace spaces/dots/etc with underscore
+        full_name = f"{client.first_name}_{client.last_name}" if client.first_name or client.last_name else f"client_{cid}"
+        slug = re.sub(r"[^א-תA-Za-z0-9]+", "_", full_name).strip("_").lower()
+
+        project_root = Path(__file__).resolve().parent.parent  # one level above app/
+        packages_root = project_root / "packages"
+        packages_root.mkdir(exist_ok=True)
+        folder = packages_root / f"{slug}_{cid}"
+        folder.mkdir(parents=True, exist_ok=True)
+
+        files: list[str] = []
+
+        # 1. טופס 161ד
+        pdf_161d = fill_161d(cid, out_dir=folder)
+        files.append(Path(pdf_161d).name)
+
+        # 2. נספח מענקים
+        grants_src = generate_grants_appendix(cid)
+        if grants_src and Path(grants_src).exists():
+            dest = folder / "grants_appendix.pdf"
+            shutil.copy2(grants_src, dest)
+            files.append(dest.name)
+
+        # 3. נספח פיצויים (היוונים)
+        severance_src = generate_commutations_appendix(cid)
+        if severance_src and Path(severance_src).exists():
+            dest = folder / "severance_appendix.pdf"
+            shutil.copy2(severance_src, dest)
+            files.append(dest.name)
+
+        rel_folder = folder.relative_to(project_root)
+        return jsonify({"folder": str(rel_folder), "files": files})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+# -----------------------------------------------------------
+# נתיב קודם להורדת טופס 161ד (לתאימות אחורה)
+# -----------------------------------------------------------
 @main_bp.route("/download-pdf/<int:client_id>", methods=["GET"])
 def legacy_download_pdf(client_id):
-    """נתיב קודם להורדת קובץ (לתאימות אחורה)"""
     return download_pdf("161d", client_id)
 
 
@@ -689,28 +737,6 @@ def calculate_exemption_summary():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-@main_bp.route("/api/fill-161d-pdf", methods=["POST"])
-def fill_161d_pdf():
-    """
-    ממלא טופס 161ד עם נתוני הלקוח ושולח את הקובץ להורדה
-    """
-    try:
-        # קבלת מזהה הלקוח
-        data = request.get_json()
-        client_id = data["client_id"]
-        
-        # קריאה לפונקציה החדשה למילוי טופס 161ד
-        from app.pdf_filler import fill_161d_form
-        
-        # הפונקציה מחזירה את נתיב הקובץ שנוצר
-        output_path = fill_161d_form(client_id)
-        
-        # שליחת הקובץ ללקוח
-        return send_file(output_path, as_attachment=True)
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"שגיאה ביצירת ה-PDF: {str(e)}"}), 500
+
 
 # שימוש בפונקציה הפשוטה החדשה למילוי 161ד
