@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: kibua
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn 'run:create_app()'"
+    plan: free
