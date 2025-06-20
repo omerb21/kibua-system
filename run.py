@@ -1,5 +1,4 @@
 from flask import Flask
-from routes import register_routes  # נרשום את הפונקציה הזו עוד רגע
 from flask_sqlalchemy import SQLAlchemy
 import os
 
@@ -12,5 +11,4 @@ def create_app():
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     db.init_app(app)
 
-    register_routes(app)
     return app
