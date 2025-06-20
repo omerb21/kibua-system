@@ -1,6 +1,11 @@
-from app import create_app
+from flask import Flask
+from routes.clients import clients_blueprint
 
+def create_app():
+    app = Flask(__name__)
+    app.config['JSON_AS_ASCII'] = False
+    app.register_blueprint(clients_blueprint)
+    return app
+
+# הפתרון – ליצור אובייקט app לשימוש ב־Gunicorn
 app = create_app()
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True)
