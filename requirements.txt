@@ -6,4 +6,5 @@ python-dotenv==1.0.0
 pdfrw==0.4.0
 pdfkit==1.0.0
 gunicorn
+Werkzeug==2.2.3
 
