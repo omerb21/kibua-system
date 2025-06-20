@@ -1,5 +1,5 @@
 from flask import Flask
-from routes.clients import clients_blueprint
+from app.clients import clients_blueprint
 
 def create_app():
     app = Flask(__name__)
@@ -7,5 +7,4 @@ def create_app():
     app.register_blueprint(clients_blueprint)
     return app
 
-# הפתרון – ליצור אובייקט app לשימוש ב־Gunicorn
 app = create_app()
