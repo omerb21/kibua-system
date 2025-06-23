@@ -162,6 +162,35 @@ def calculate_final_exempt_amount(exemption_cap_remaining: float, commutation_im
     return round(max(exemption_cap_remaining - commutation_impact, 0), 2)
 
 
+def get_client_package_dir(client_id, client_first_name=None, client_last_name=None):
+    """
+    Get the package directory path for a client, creating it if necessary.
+    Uses consistent naming: {first_name}_{last_name}_{id} with proper slugification.
+    """
+    import os
+    import re
+    from pathlib import Path
+    
+    # Get client info if not provided
+    if client_first_name is None or client_last_name is None:
+        from app.models import Client
+        client = Client.query.get(client_id)
+        if client:
+            client_first_name = client.first_name or ""
+            client_last_name = client.last_name or ""
+    
+    # Create slug from name
+    full_name = f"{client_first_name or ''}_{client_last_name or ''}".strip('_')
+    full_name = full_name or f"client_{client_id}"
+    slug = re.sub(r"[^א-תA-Za-z0-9]+", "_", full_name).strip("_")
+    
+    # Create directory
+    package_dir = Path(__file__).parent.parent / "packages" / f"{slug}_{client_id}"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    
+    return str(package_dir)
+
+
 def calculate_summary(client_id: int, eligibility_date=None) -> dict:
     """
     מחשב את סיכום הפטור המלא ללקוח לפי המבנה החדש

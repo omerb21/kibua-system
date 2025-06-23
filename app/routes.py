@@ -326,7 +326,7 @@ def api_generate_161d_form():
                 "success": True,
                 "message": "טופס 161d הופק בהצלחה",
                 "file_path": relative_path,
-                "download_url": f"/static/generated/161d_client_{client_id}.pdf"
+                "download_url": f"/packages/{client.slugify_name()}_{client_id}/161d_client_{client_id}.pdf"
             })
             
         except Exception as inner_e:
@@ -599,17 +599,19 @@ def download_pdf(doc_type, client_id):
             download_name = f"161d_{client.first_name}_{client.last_name}_{client.tz}.pdf"
             html_path = ""  # Not applicable for this document type
         elif doc_type == "grants":
-            pdf_path = os.path.join(base_dir, "static", "generated", f"grants_appendix_{client_id}.pdf")
-            html_path = os.path.join(base_dir, "static", "generated", f"grants_appendix_{client_id}.html")
+            package_dir = os.path.join(base_dir, "packages", f"{client.slugify_name()}_{client_id}")
+            pdf_path = os.path.join(package_dir, "grants_appendix.pdf")
+            html_path = os.path.join(package_dir, "grants_appendix.html")
             download_name = f"grants_appendix_{client.first_name}_{client.last_name}.pdf"
             if not os.path.exists(pdf_path) and not os.path.exists(html_path):
                 grants_appendix_path = generate_grants_appendix(client_id)
                 if grants_appendix_path is None:
                     return jsonify({"error": "לא ניתן להפיק נספח מענקים - אין מענקים תקינים"}), 404
         elif doc_type == "commutations":
-            pdf_path = os.path.join(base_dir, "static", "generated", f"commutations_appendix_{client_id}.pdf")
-            html_path = os.path.join(base_dir, "static", "generated", f"commutations_appendix_{client_id}.html")
-            download_name = f"commutations_appendix_{client.first_name}_{client.last_name}.pdf"
+            package_dir = os.path.join(base_dir, "packages", f"{client.slugify_name()}_{client_id}")
+            pdf_path = os.path.join(package_dir, "severance_appendix.pdf")
+            html_path = os.path.join(package_dir, "severance_appendix.html")
+            download_name = f"severance_appendix_{client.first_name}_{client.last_name}.pdf"
             if not os.path.exists(pdf_path) and not os.path.exists(html_path):
                 generate_commutations_appendix(client_id)
         else:
@@ -648,15 +650,13 @@ def generate_package(cid):
     """Generate a full client document package (161d + appendices) and return the folder path."""
     try:
         client = Client.query.get_or_404(cid)
-        # Create slugified folder name: replace spaces/dots/etc with underscore
-        full_name = f"{client.first_name}_{client.last_name}" if client.first_name or client.last_name else f"client_{cid}"
-        slug = re.sub(r"[^א-תA-Za-z0-9]+", "_", full_name).strip("_").lower()
-
+        # Get or create package directory using the utility function
+        from app.utils import get_client_package_dir
         project_root = Path(__file__).resolve().parent.parent  # one level above app/
-        packages_root = project_root / "packages"
-        packages_root.mkdir(exist_ok=True)
-        folder = packages_root / f"{slug}_{cid}"
-        folder.mkdir(parents=True, exist_ok=True)
+        package_dir = get_client_package_dir(client_id=cid, 
+                                         client_first_name=client.first_name, 
+                                         client_last_name=client.last_name)
+        folder = Path(package_dir)
 
         files: list[str] = []
 

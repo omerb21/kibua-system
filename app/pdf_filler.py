@@ -3,9 +3,12 @@ import tempfile
 import pdfkit
 import subprocess
 import platform
+import json
 from datetime import datetime, date
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
 from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
-from app.models import Client, Grant, Pension, Commutation
+from app.models import db, Client, Grant, Pension, Commutation
 
 # Check if wkhtmltopdf is installed and configure its path
 def find_wkhtmltopdf_path():
@@ -279,13 +282,16 @@ def generate_grants_appendix(client_id: int) -> str:
     
     # יצירת קובץ PDF מ-HTML
     base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-    output_dir = os.path.join(base_dir, "static", "generated")
-    os.makedirs(output_dir, exist_ok=True)
     
-    output_path = os.path.join(output_dir, f"grants_appendix_{client_id}.pdf")
+    # Create a package directory for the client
+    client = Client.query.get_or_404(client_id)
+    package_dir = os.path.join(base_dir, "packages", f"{client.slugify_name()}_{client_id}")
+    os.makedirs(package_dir, exist_ok=True)
+    
+    output_path = os.path.join(package_dir, "grants_appendix.pdf")
     
     # שמירת ה-HTML לקובץ זמני
-    html_temp_file = os.path.join(output_dir, f"grants_appendix_{client_id}.html")
+    html_temp_file = os.path.join(package_dir, "grants_appendix.html")
     with open(html_temp_file, 'w', encoding='utf-8') as f:
         f.write(html_content)
     
@@ -362,7 +368,7 @@ def fill_161d_form(client_id: int) -> str:
     }
     
     # טען את התבנית
-    template_path = Path('static/templates/161d.pdf')
+    template_path = Path('app/static/templates/161d.pdf')
     reader = PdfReader(template_path)
     writer = PdfWriter()
     writer.addpages(reader.pages)
@@ -401,7 +407,11 @@ def fill_161d_form(client_id: int) -> str:
     print(f"Updated {updated} of {len(unicode_vals)} fields")
     
     # שמירה
-    output_dir = Path('static/generated')
+    # Create a package directory for the client
+    client = Client.query.get_or_404(client_id)
+    package_dir = Path(f'packages/{client.slugify_name()}_{client_id}')
+    package_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = package_dir
     output_dir.mkdir(exist_ok=True)
     output = output_dir/f'161d_client_{client.id}.pdf'
     
@@ -526,13 +536,16 @@ def generate_commutations_appendix(client_id: int) -> str:
     
     # יצירת קובץ PDF מ-HTML
     base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-    output_dir = os.path.join(base_dir, "static", "generated")
-    os.makedirs(output_dir, exist_ok=True)
     
-    output_path = os.path.join(output_dir, f"commutations_appendix_{client_id}.pdf")
+    # Create a package directory for the client
+    client = Client.query.get_or_404(client_id)
+    package_dir = os.path.join(base_dir, "packages", f"{client.slugify_name()}_{client_id}")
+    os.makedirs(package_dir, exist_ok=True)
+    
+    output_path = os.path.join(package_dir, "severance_appendix.pdf")
     
     # שמירת ה-HTML לקובץ זמני
-    html_temp_file = os.path.join(output_dir, f"commutations_appendix_{client_id}.html")
+    html_temp_file = os.path.join(package_dir, "severance_appendix.html")
     with open(html_temp_file, 'w', encoding='utf-8') as f:
         f.write(html_content)
     
