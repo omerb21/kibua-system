@@ -1,1 +1,1 @@
-web: chmod +x ./start.sh && ./start.sh
+web: gunicorn --worker-class sync --workers=4 --bind 0.0.0.0:$PORT app:app
