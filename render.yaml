@@ -2,7 +2,7 @@ services:
   - type: web
     name: kibua-system
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: chmod +x setup.sh && ./setup.sh
     startCommand: gunicorn --worker-class sync --workers=4 --bind 0.0.0.0:$PORT wsgi:app
     envVars:
       - key: PYTHON_VERSION
