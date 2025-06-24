@@ -1,7 +1,13 @@
-Flask==2.2.3
-SQLAlchemy==2.0.9
-Flask-SQLAlchemy==3.0.3
-requests>=2.31
+Flask==2.3.3
+Werkzeug==2.3.7
+Jinja2==3.1.2
+itsdangerous==2.1.2
+click==8.1.7
+SQLAlchemy==1.4.51
+Flask-SQLAlchemy==3.1.1
+greenlet==2.0.2
+requests==2.31.0
 python-dotenv==1.0.0
 pdfrw==0.4.0
 pdfkit==1.0.0
+gunicorn==21.2.0
